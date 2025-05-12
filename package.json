@@ -1,11 +1,22 @@
 {
   "name": "runnable-info-extractor",
-  "displayName": "Runnable_Info_Extractor",
+  "displayName": "Runnable Info Extractor",
   "description": "Extract runnables info from C files to Excel to Save time and effort",
-  "version": "0.0.1",
+  "publisher": "AbdallahIssa",
+  "version": "1.0.1",
+  "icon": "Vehiclevo_Logo.jpg",
   "engines": {
     "vscode": "^1.100.0"
   },
+  "license": "MIT",
+   "repository": {
+    "type": "git",
+    "url": "https://github.com/AbdallahIssa/Runnable-Info-Extractor.git/"
+  },
+  "bugs": {
+    "url": "https://github.com/AbdallahIssa/Runnable-Info-Extractor/issues"
+  },
+  "homepage": "https://github.com/AbdallahIssa/Runnable-Info-Extractor",
   "categories": [
     "Other"
   ],
