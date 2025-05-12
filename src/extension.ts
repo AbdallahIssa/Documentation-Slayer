@@ -84,12 +84,26 @@ function parseBlock(block: string): RunnableInfo | null {
 }
 
 /* ─────────────────────────── Excel writer ──────────────────────────────────── */
-async function writeExcel (file: string, data: RunnableInfo[], sheetName: string) {
+async function writeExcel (file: string,
+                           data: RunnableInfo[],
+                           sheetName: string) {
   const wb = new Excel.Workbook();
   const ws = wb.addWorksheet(sheetName);
 
-  ws.addRow(['Function Name', 'Trigger(s)', 'Inputs', 'Outputs', 'Invoked Operations']);
+  /* ── header ───────────────────────────── */
+  ws.addRow(['Function Name', 'Trigger(s)',
+             'Inputs', 'Outputs', 'Invoked Operations']);
 
+  const header = ws.getRow(1);
+  header.font = { bold: true, color: { argb: 'FFFF0000' } };   // red
+  header.fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FFFFFF00' }                              // yellow
+  };
+  header.commit();
+
+  /* ── data rows ────────────────────────── */
   for (const r of data) {
     ws.addRow([
       r.name,
@@ -100,19 +114,19 @@ async function writeExcel (file: string, data: RunnableInfo[], sheetName: string
     ]);
   }
 
-  /* single clean auto-fit pass */
+  /* auto-fit columns (keeps earlier logic) */
   ws.columns.forEach(col => {
     if (!col) return;
     let max = 10;
-
-    col.eachCell?.((cell) => {
-      max = Math.max(max, (cell.value?.toString().length ?? 0) + 2);
-    });
+    col.eachCell?.(cell =>
+      max = Math.max(max,
+                     (cell.value?.toString().length ?? 0) + 2));
     col.width = max;
   });
 
   await wb.xlsx.writeFile(file);
 }
+
 
 /* ──────────────────────────── parsing helpers ──────────────────────────── */
 function collectSection(
