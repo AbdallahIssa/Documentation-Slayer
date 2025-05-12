@@ -26,8 +26,10 @@ export function activate (ctx: vscode.ExtensionContext) {
         return vscode.window.showWarningMessage('No runnable documentation blocks found.');
       }
 
+      const swcName    = getSwcName(editor.document.uri); // vscode.window.showInputBox();
       const defaultFile = path.join(
-        path.dirname(editor.document.uri.fsPath), 'runnables.xlsx'
+        path.dirname(editor.document.uri.fsPath),
+        `${swcName}.xlsx`
       );
       const uri = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(defaultFile),
@@ -35,7 +37,7 @@ export function activate (ctx: vscode.ExtensionContext) {
       });
       if (!uri) { return; }
 
-      await writeExcel(uri.fsPath, runnables);
+      await writeExcel(uri.fsPath, runnables, swcName);
       vscode.window.showInformationMessage(
         `Exported ${runnables.length} runnables → ${uri.fsPath}`
       );
@@ -82,9 +84,9 @@ function parseBlock(block: string): RunnableInfo | null {
 }
 
 /* ─────────────────────────── Excel writer ──────────────────────────────────── */
-async function writeExcel (file: string, data: RunnableInfo[]) {
+async function writeExcel (file: string, data: RunnableInfo[], sheetName: string) {
   const wb = new Excel.Workbook();
-  const ws = wb.addWorksheet('Runnables');
+  const ws = wb.addWorksheet(sheetName);
 
   ws.addRow(['Function Name', 'Trigger(s)', 'Inputs', 'Outputs', 'Invoked Operations']);
 
@@ -184,4 +186,9 @@ function collectTriggers(lines: string[]): string[] {
     result.push(ln);
   }
   return result;
+}
+
+function getSwcName(uri: vscode.Uri): string {
+  const full = path.basename(uri.fsPath);
+  return full.replace(/\.[^.]+$/, '');
 }
