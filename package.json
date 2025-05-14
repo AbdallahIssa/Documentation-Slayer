@@ -1,9 +1,9 @@
 {
   "name": "runnable-info-extractor",
-  "displayName": "Runnable Info Extractor",
-  "description": "Extract runnables info from C files to Excel to Save time and effort",
+  "displayName": "Documentation Slayer",
+  "description": "Automate the process of unit design Documentation for Classic AUTOSAR Projects",
   "publisher": "AbdallahIssa",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "icon": "Vehiclevo_Logo.jpg",
   "engines": {
     "vscode": "^1.100.0"
