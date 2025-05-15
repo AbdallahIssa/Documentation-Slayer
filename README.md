@@ -1,4 +1,4 @@
-# Runnable-Info-Extractor
+# Documentation-Slayer
 
 I want to introduce you to this VS-Code extension I have made:
 
