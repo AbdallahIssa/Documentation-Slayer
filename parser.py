@@ -96,7 +96,7 @@ def parse_file(src):
             elif src[j] == "}": depth -= 1
             j += 1
         body = src[brace_idx+1 : j-1]
-        # ─── strip out ALL comments (/* … */ and // … ) so invokedOps sees only real code
+        # Strip out all the comments ,So invokedOps sees only real code
         code = re.sub(r'/\*[\s\S]*?\*/|//.*', '', body)
 
         # 6) MULTI-LINE triggers for runnables
