@@ -114,8 +114,25 @@ def parse_file(src):
         outP = [p for p in names if dirs[p] in ("OUT","INOUT")]
 
         # 9) RTE APIs
-        inputs  = sorted({x.split("(")[0] for x in re.findall(r"\bRte_Read_[\w_]+\s*\(",    body)})
-        outputs = sorted({x.split("(")[0] for x in re.findall(r"\bRte_(?:Write|IrvWrite)_[\w_]+\s*\(", body)})
+        # match any of: Read, DRead, IRead, Receive, IReadRef, IrvRead, IsUpdated, Mode_* 
+        inputs = sorted({
+            x.split("(")[0]
+            for x in re.findall(
+                r"\bRte_(?:Read|DRead|IRead|Receive|IReadRef|IrvRead|IsUpdated|Mode_)[\w_]*\s*\(",
+                body
+            )
+        })
+
+        # match any of: Write, IrvWrite, IWrite, IWriteRef, Switch* 
+        outputs = sorted({
+            x.split("(")[0]
+            for x in re.findall(
+                r"\bRte_(?:Write|IrvWrite|IWrite|IWriteRef|Switch)[\w_]*\s*\(",
+                body
+            )
+        })
+
+
         calls   = sorted({x.split("(")[0] for x in re.findall(r"\bRte_Call_[\w_]+\s*\(",    body)})
 
         # 10) other locals minus reserved/excluded
