@@ -52,6 +52,13 @@ def parse_file(src):
         r'([A-Za-z_]\w*)\s*\('                # name + '('
         , re.MULTILINE
     )
+    # 2c) global helpers:  returnType  name(   …but NOT static and NOT FUNC(...)
+    global_rx = re.compile(
+        r'^[ \t]*(?!static\b)(?!FUNC\b)'     # not static, not the FUNC macro
+        r'([A-Za-z_]\w*(?:\s*\*+)?)\s+'      # return type (group 1)
+        r'([A-Za-z_]\w*)\s*\('               # function name  (group 2)
+        , re.MULTILINE
+    )
 
     def extract(m, fnType):
         retType, name = m.group(1), m.group(2)
@@ -172,6 +179,8 @@ def parse_file(src):
         extract(m, "Runnable")
     for m in static_rx.finditer(src):
         extract(m, "Static")
+    for m in global_rx.finditer(src):
+        extract(m, "Global")
 
     return rows
 
