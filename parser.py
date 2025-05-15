@@ -52,12 +52,17 @@ def parse_file(src):
         r'([A-Za-z_]\w*)\s*\('                # name + '('
         , re.MULTILINE
     )
-    # 2c) global helpers:  returnType  name(   …but NOT static and NOT FUNC(...)
+    # 2c) global helpers:  returnType  name(   …but NOT static, NOT FUNC(...), NOT reserved words
     global_rx = re.compile(
-        r'^[ \t]*(?!static\b)(?!FUNC\b)'     # not static, not the FUNC macro
-        r'([A-Za-z_]\w*(?:\s*\*+)?)\s+'      # return type (group 1)
-        r'([A-Za-z_]\w*)\s*\('               # function name  (group 2)
-        , re.MULTILINE
+        r'''
+        ^[ \t]*                        # line start + optional indent
+        (?!static\b)                   # not a static function
+        (?!FUNC\b)                     # not the FUNC(...) macro
+        ([A-Za-z_]\w*(?:\s*\*+)?)\s+   # return type (group 1)
+        (?!(?:if|for|while|switch|do|else|case)\b)  # EXCLUDE reserved keywords
+        ([A-Za-z_]\w*)\s*\(            # function name (group 2) + '('
+        ''',
+        re.MULTILINE | re.VERBOSE
     )
 
     def extract(m, fnType):
@@ -91,6 +96,8 @@ def parse_file(src):
             elif src[j] == "}": depth -= 1
             j += 1
         body = src[brace_idx+1 : j-1]
+        # ─── strip out ALL comments (/* … */ and // … ) so invokedOps sees only real code
+        code = re.sub(r'/\*[\s\S]*?\*/|//.*', '', body)
 
         # 6) MULTI-LINE triggers for runnables
         if fnType == "Runnable":
@@ -125,7 +132,7 @@ def parse_file(src):
         inputs = sorted({
             x.split("(")[0]
             for x in re.findall(
-                r"\bRte_(?:Read|DRead|IRead|Receive|IReadRef|IrvRead|IsUpdated|Mode_)[\w_]*\s*\(",
+                r"\bRte_(?:Read|DRead|IRead|Receive|IReadRef|IrvRead|IsUpdated|CData|Mode_)[\w_]*\s*\(",
                 body
             )
         })
@@ -139,11 +146,10 @@ def parse_file(src):
             )
         })
 
-
-        calls   = sorted({x.split("(")[0] for x in re.findall(r"\bRte_Call_[\w_]+\s*\(",    body)})
+        calls = sorted({x.split("(")[0] for x in re.findall(r"\bRte_Call_[\w_]+\s*\(",    code)})
 
         # 10) other locals minus reserved/excluded
-        plain = re.findall(r"\b([A-Za-z_]\w*)\s*\(", body)
+        plain = re.findall(r"\b([A-Za-z_]\w*)\s*\(", code)
         locals_ = sorted({
             c for c in plain
             if c not in reserved
@@ -199,7 +205,7 @@ def main():
         data = parse_file(src)
         print(json.dumps(data, indent=2))
     except Exception as e:
-        print(f"❌ Error parsing {args.file}: {e}", file=sys.stderr)
+        print(f"❌ Error parsing {args.file}: {e}", file=sys.stderr) # only for Debugggggggggggggggggggggggg
         sys.exit(1)
 
 if __name__ == "__main__":
