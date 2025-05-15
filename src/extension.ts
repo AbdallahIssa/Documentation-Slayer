@@ -114,7 +114,7 @@ async function writeExcel(
     ? await new Excel.Workbook().xlsx.readFile(outPath)
     : new Excel.Workbook();
 
-  const ws = workbook.getWorksheet('Runnables') || workbook.addWorksheet('Runnables');
+  const ws = workbook.getWorksheet('Runnables and static functions') || workbook.addWorksheet('Runnables and static functions');
 
   if (ws.rowCount === 0) {
     ws.addRow(HEADERS);

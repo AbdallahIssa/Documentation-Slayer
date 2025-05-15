@@ -35,7 +35,7 @@ def get_trigger_comment(comments, pos):
 def parse_file(src):
     rows = []
     reserved = {"if","for","while","switch","do","else","case"}
-    exclude_invoked = {"VStdLib_MemCpy","VStdLib_MemSet","memcpy","memset","sizeof"}
+    exclude_invoked = {"VStdLib_MemCpy","VStdLib_MemSet","memcpy","memset","sizeof", "abs"}
 
     # 1) collect comment blocks for later trigger lookup
     comments = [(m.end(), m.group(0)) for m in re.finditer(r"/\*[\s\S]*?\*/", src)]
@@ -104,10 +104,10 @@ def parse_file(src):
             mm = re.search(r"\b([A-Za-z_]\w*)\s*$", p)
             names.append(mm.group(1) if mm else p)
 
-        # 8) IN/OUT/INOUT + force P2CONST(...) → OUT
+        # 8) IN/OUT/INOUT + force P2CONST(...) and P2VAR(...) → OUT
         dirs = classify_params(body, names)
         for orig, nm in zip(parts, names):
-            if orig.startswith("P2CONST("):
+            if (orig.startswith("P2CONST(") or orig.startswith("P2VAR(")):
                 dirs[nm] = "OUT"
 
         inP  = [p for p in names if dirs[p] in ("IN","INOUT")]
