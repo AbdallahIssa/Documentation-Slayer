@@ -27,7 +27,7 @@ const HEADERS = [
 export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     vscode.commands.registerCommand(
-      'runnable-info-extractor.runnable-info-extractor',
+      'Run-Documentation-Slayer.Run-Documentation-Slayer',
       () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {

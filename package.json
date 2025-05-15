@@ -1,9 +1,9 @@
 {
-  "name": "runnable-info-extractor",
+  "name": "documentation-slayer",
   "displayName": "Documentation Slayer",
-  "description": "Automate the process of unit design Documentation for Classic AUTOSAR Projects",
+  "description": "Automate the process of unit design Documentation for Classic AUTOSAR Projects and exports them to a structured Excel spreadsheet.",
   "publisher": "AbdallahIssa",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "icon": "Vehiclevo_Logo.jpg",
   "engines": {
     "vscode": "^1.100.0"
@@ -11,12 +11,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AbdallahIssa/Runnable-Info-Extractor.git/"
+    "url": "https://github.com/AbdallahIssa/Documentation-Slayer.git"
   },
   "bugs": {
-    "url": "https://github.com/AbdallahIssa/Runnable-Info-Extractor/issues"
+    "url": "https://github.com/AbdallahIssa/Documentation-Slayer/issues"
   },
-  "homepage": "https://github.com/AbdallahIssa/Runnable-Info-Extractor",
+  "homepage": "https://github.com/AbdallahIssa/Documentation-Slayer",
   "categories": [
     "Other"
   ],
@@ -25,8 +25,8 @@
   "contributes": {
     "commands": [
       {
-        "command": "runnable-info-extractor.runnable-info-extractor",
-        "title": "Extract Runnable Info"
+        "command": "Run-Documentation-Slayer.Run-Documentation-Slayer",
+        "title": "Run Documentation Slayer"
       }
     ]
   },
