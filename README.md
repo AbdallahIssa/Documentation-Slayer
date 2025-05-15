@@ -2,7 +2,7 @@
 
 I want to introduce you to this VS-Code extension I have made:
 
-✨ Runnable Info Extractor ✨
+✨ Documentation-Slayer ✨
 
 These are mainly the most recent added features in this version:
 
