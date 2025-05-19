@@ -172,7 +172,13 @@ def parse_file(src):
             and not c.startswith("Rte_")
             and c != name
         })
-        invoked = sorted(set(calls + locals_))
+        #  merge calls + locals, then drop any ALL-UPPERCASE names (MACROs)
+        all_candidates = set(calls + locals_)
+        invoked = sorted(
+            c for c in all_candidates
+            if not re.fullmatch(r'[A-Z][A-Z0-9_]*', c)
+        )
+
 
         # 11) used data types, excluding reserved keyywords
         used = sorted({
