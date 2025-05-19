@@ -34,8 +34,8 @@ def get_trigger_comment(comments, pos):
 
 def parse_file(src):
     rows = []
-    reserved = {"if","for","while","switch","do","else","case"}
-    exclude_invoked = {"VStdLib_MemCpy","VStdLib_MemSet","memcpy","memset","sizeof", "abs"}
+    reserved = {"if","for","while","switch","do","else","case", "sizeof", "abs", "return"}
+    exclude_invoked = {"VStdLib_MemCpy","VStdLib_MemSet", "VStdLib_MemCmp", "memcmp", "memcpy", "memset", "sizeof", "abs", "return"}
 
     # 1) collect comment blocks for later trigger lookup
     comments = [(m.end(), m.group(0)) for m in re.finditer(r"/\*[\s\S]*?\*/", src)]
@@ -48,9 +48,17 @@ def parse_file(src):
     )
     # 2b) static helpers: static returnType name(
     static_rx = re.compile(
-        r'^[ \t]*static\s+([A-Za-z_]\w*)\s+'  # returnType
-        r'([A-Za-z_]\w*)\s*\('                # name + '('
-        , re.MULTILINE
+        r'''
+        ^[ \t]*static\s+(?:inline\s+)?                  # “static ” or “static inline”
+        (?:                                             # either…
+          FUNC\s*                                       # FUNC macro
+           \(\s*([A-Za-z_]\w*)\s*,\s*[A-Za-z_]\w*\s*\)  # capture returnType in group1
+        |                                               # OR
+          ([A-Za-z_]\w*)                                # direct returnType in group2
+        )
+        \s+([A-Za-z_]\w*)\s*\(                          # function name in group3 + "("
+        ''',
+        re.MULTILINE | re.VERBOSE
     )
     # 2c) global helpers:  returnType  name(   …but NOT static, NOT FUNC(...), NOT reserved words
     global_rx = re.compile(
@@ -64,9 +72,16 @@ def parse_file(src):
         ''',
         re.MULTILINE | re.VERBOSE
     )
+    
 
     def extract(m, fnType):
-        retType, name = m.group(1), m.group(2)
+        if fnType == "Static":
+            # group1 = FUNC-macro returnType or None, group2 = direct returnType, group3 = name
+            retType = m.group(1) or m.group(2)
+            name = m.group(3)
+        else:
+            # for Runnable, runnable_rx has 2 groups: (retType, name)
+            retType, name = m.group(1), m.group(2)
         L = len(src)
 
         # 3) find matching ')' by counting
@@ -159,12 +174,12 @@ def parse_file(src):
         })
         invoked = sorted(set(calls + locals_))
 
-        # 11) used data types, excluding "return"
+        # 11) used data types, excluding reserved keyywords
         used = sorted({
             t for t in re.findall(
                 r"\b([A-Za-z_]\w*)\s+[A-Za-z_]\w*\s*(?:[=;])",
                 body
-            ) if t.lower() != "return"
+            ) if t.lower() not in reserved
         })
 
         rows.append({
