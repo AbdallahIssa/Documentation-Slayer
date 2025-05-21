@@ -1,154 +1,196 @@
-/* 
- - Using python instead of ts for easy debugging for me.
- - Introducing the new methodology by parsing the Runnables and helper functions directly instead of parsing the template comment block.
- - Updating the version by the newly added major changes.
-*/
+/*  Documentation-Slayer VS-Code side
+ *  – runs parser.py
+ *  – writes Excel    (.xlsx)
+ *  – writes Markdown (.md)
+ *  – one combined notification with Open-Excel / Open-Word / Open-MD
+ */
 
 import * as vscode from 'vscode';
-import * as path from 'path';
+import * as path   from 'path';
 import { execFile } from 'child_process';
-import * as fs from 'fs';
-import * as Excel from 'exceljs';
+import * as fs     from 'fs';
+import * as Excel  from 'exceljs';
 
 const HEADERS = [
-  "Name",
-  "Return Value",
-  "In-Parameters",
-  "Out-Parameters",
-  "Function Type",
-  "Description",
-  "Triggers",
-  "Inputs",
-  "Outputs",
-  "Invoked Operations",
-  "Used Data Types",
+  'Name', 'Syntax', 'Return Value', 'In-Parameters', 'Out-Parameters',
+  'Function Type', 'Description', 'Sync/Async', 'Reentrancy',
+  'Triggers', 'Inputs', 'Outputs',
+  'Invoked Operations', 'Used Data Types'
 ];
 
 export function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(
     vscode.commands.registerCommand(
       'Run-Documentation-Slayer.Run-Documentation-Slayer',
-      () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          return vscode.window.showWarningMessage('Open a C file first.');
-        }
-
-        const uri = editor.document.uri;
-        const srcPath = uri.fsPath;
-        const swcName = getSWCName(uri);
-        vscode.window.showInformationMessage(`🚀 Extracting for SWC: ${swcName}`);
-
-        const pyPath = path.join(ctx.extensionPath, 'parser.py');
-        const candidates =
-          process.platform === 'win32'
-            ? ['py', 'python', 'python3']
-            : ['python3', 'python'];
-        let idx = 0;
-
-        function tryExec() {
-          if (idx >= candidates.length) {
-            return vscode.window.showErrorMessage(
-              `No Python interpreter found. Tried: ${candidates.join(', ')}`
-            );
-          }
-          const pythonCmd = candidates[idx++];
-          vscode.window.showInformationMessage(`🔍 Running ${pythonCmd}…`);
-
-          execFile(pythonCmd, [pyPath, srcPath], {}, async (err, stdout, stderr) => {
-            if (err) {
-              if (
-                (err as any).code === 'ENOENT' ||
-                /not found/i.test(err.message)
-              ) {
-                return tryExec();
-              }
-              vscode.window.showErrorMessage(`❌ ${pythonCmd} error: ${err.message}`);
-              if (stderr) {
-                vscode.window.showWarningMessage(stderr);
-              }
-              return;
-            }
-            if (stderr) {
-              vscode.window.showWarningMessage(`⚠️ parser stderr:\n${stderr}`);
-            }
-
-            let rows: any[];
-            try {
-              rows = JSON.parse(stdout);
-            } catch (je) {
-              return vscode.window.showErrorMessage(`❌ JSON parse error: ${je}`);
-            }
-
-            vscode.window.showInformationMessage(`✅ Found ${rows.length} functions.`);
-
-            try {
-              await writeExcel(srcPath, swcName, rows);
-              vscode.window.showInformationMessage(`💾 Saved ${swcName}.xlsx`);
-            } catch (we: any) {
-              vscode.window.showErrorMessage(`❌ Excel write error: ${we.message || we}`);
-            }
-          });
-        }
-
-        tryExec();
-      }
+      () => runExtractor(ctx)
     )
   );
 }
 
-function getSWCName(uri: vscode.Uri): string {
-  const full = path.basename(uri.fsPath);
-  return full.replace(/\.[^.]+$/, '');
+async function runExtractor(ctx: vscode.ExtensionContext) {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage('Open a C file first.');
+    return;
+  }
+
+  const uri     = editor.document.uri;
+  const srcPath = uri.fsPath;
+  const swcName = path.basename(srcPath, path.extname(srcPath));
+
+  /* find python */
+  const pythonExe = await findPython();
+  if (!pythonExe) return;
+
+  /* run parser.py */
+  const pyPath = path.join(ctx.extensionPath, 'parser.py');
+  const { stdout, stderr } = await runProcess(pythonExe, [pyPath, srcPath]);
+
+  if (stderr.trim()) {
+    vscode.window.showWarningMessage(`⚠️ parser stderr:\n${stderr}`);
+  }
+
+  let rows: any[];
+  try {
+    rows = JSON.parse(stdout);
+  } catch (e) {
+    vscode.window.showErrorMessage(`❌ JSON parse error: ${(e as Error).message}`);
+    return;
+  }
+
+  /* output paths */
+  const outDir     = path.dirname(srcPath);
+  const excelPath  = path.join(outDir, `${swcName}.xlsx`);
+  const wordPath   = path.join(outDir, `${swcName}.docx`);
+  const mdPath     = path.join(outDir,  `${swcName}.md`);
+
+  /* save Excel & Markdown with progress spinner */
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title:    `Saving ${swcName}.xlsx / .md…`,
+        cancellable: false
+      },
+      async () => {
+        await writeExcel(excelPath, rows);
+        await writeMarkdown(mdPath, rows);
+      }
+    );
+  } catch (err: any) {
+    vscode.window.showErrorMessage(
+      `❌ File write error: ${err?.message ?? String(err)}`
+    );
+    return;
+  }
+
+  /* final clickable notification */
+  const choice = await vscode.window.showInformationMessage(
+    `✅ Found ${rows.length} functions and saved ${swcName}.xlsx`,
+    'Open Excel', 'Open Word', 'Open MD'
+  );
+
+  if (choice === 'Open Excel') {
+    vscode.env.openExternal(vscode.Uri.file(excelPath));
+  } else if (choice === 'Open Word') {
+    vscode.env.openExternal(vscode.Uri.file(wordPath));
+  } else if (choice === 'Open MD') {
+    const doc = await vscode.workspace.openTextDocument(mdPath);
+    vscode.window.showTextDocument(doc, { preview: false });
+  }
 }
 
-async function writeExcel(
-  srcPath: string,
-  swcName: string,
-  rows: any[]
-) {
-  const outDir = path.dirname(srcPath);
-  const outPath = path.join(outDir, `${swcName}.xlsx`);
+/* ───────── helpers ───────────────────────────────────────── */
 
-  const workbook = fs.existsSync(outPath)
-    ? await new Excel.Workbook().xlsx.readFile(outPath)
+async function findPython(): Promise<string | null> {
+  const cands = process.platform === 'win32'
+    ? ['py', 'python', 'python3']
+    : ['python3', 'python'];
+
+  for (const exe of cands) {
+    try { await runProcess(exe, ['--version']); return exe; }
+    catch {/* next */}
+  }
+  vscode.window.showErrorMessage(`No Python interpreter found. Tried: ${cands.join(', ')}`);
+  return null;
+}
+
+function runProcess(cmd: string, args: string[]) {
+  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    execFile(cmd, args, { encoding: 'utf8', maxBuffer: 10_000_000 },
+      (err, stdout, stderr) => err ? reject(err) : resolve({ stdout, stderr }));
+  });
+}
+
+/* ─── Excel ──────────────────────────────────────────────── */
+async function writeExcel(file: string, rows: any[]) {
+  const wb = fs.existsSync(file)
+    ? await new Excel.Workbook().xlsx.readFile(file)
     : new Excel.Workbook();
 
-  const ws = workbook.getWorksheet('Runnables and static functions') || workbook.addWorksheet('Runnables and static functions');
+  const ws = wb.getWorksheet('Runnables and static functions')
+            ?? wb.addWorksheet('Runnables and static functions');
 
   if (ws.rowCount === 0) {
     ws.addRow(HEADERS);
+    const hdr = ws.getRow(1);
+    hdr.eachCell(c => {
+      c.font = { bold: true, color: { argb:'FFFF0000' } };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFFF00' } };
+    });
   }
 
-  // Style header row
-  const headerRow = ws.getRow(1);
-  headerRow.eachCell((cell) => {
-    cell.font = { bold: true, color: { argb: 'FFFF0000' } }; // red font
-    cell.fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFFFFF00' }, // yellow fill
-    };
-  });
-
-  // Append data rows
   for (const r of rows) {
     ws.addRow([
       r.name,
+      r.syntax,
       r.ret,
       r.inParams.join(', '),
       r.outParams.join(', '),
       r.fnType,
-      '', // Description
+      '',                         // Description
+      r.Sync_Async,
+      r.Reentrancy,
       r.trigger,
       r.inputs.join(', '),
       r.outputs.join(', '),
       r.invoked.join(', '),
-      r.used.join(', '),
+      r.used.join(', ')
     ]);
   }
 
-  await workbook.xlsx.writeFile(outPath);
+  ws.columns.forEach(col => {
+    let max = 12;
+    col.eachCell?.(c => max = Math.max(max, (c.value?.toString().length ?? 0)+2));
+    col.width = max;
+  });
+
+  await wb.xlsx.writeFile(file);
 }
 
-export function deactivate() {}
+/* ─── Markdown ───────────────────────────────────────────── */
+async function writeMarkdown(file: string, rows: any[]) {
+  const lines: string[] = [];
+  for (const r of rows) {
+    lines.push(`## ${r.name}\n`);
+    lines.push('| Field | Value |');
+    lines.push('|-------|-------|');
+    lines.push(`| Syntax | \`${r.syntax}\` |`);
+    lines.push(`| Sync/Async | \`${r.Sync_Async}\` |`);
+    lines.push(`| Reentrancy | \`${r.Reentrancy}\` |`);
+    lines.push(`| Return Value | \`${r.ret}\` |`);
+    lines.push(`| In-Parameters | ${r.inParams.join(', ')} |`);
+    lines.push(`| Out-Parameters | ${r.outParams.join(', ')} |`);
+    lines.push(`| Function Type | ${r.fnType} |`);
+    lines.push(`| Triggers | ${r.trigger} |`);
+    lines.push(`| Inputs | ${r.inputs.join(', ')} |`);
+    lines.push(`| Outputs | ${r.outputs.join(', ')} |`);
+    lines.push(`| Invoked Operations | ${r.invoked.join(', ')} |`);
+    lines.push(`| Used Data Types | ${r.used.join(', ')} |`);
+    lines.push(`| Description | ${""} |`);
+    lines.push(''); // blank line between functions
+  }
+  await fs.promises.writeFile(file, lines.join('\n'), 'utf8');
+}
+
+export function deactivate() { }
