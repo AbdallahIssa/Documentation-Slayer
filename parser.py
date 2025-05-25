@@ -115,36 +115,43 @@ def write_markdown(file_path: str, rows: list[dict], sel_fields: list[str]):
     Only the sel_fields are included in each table.
     """
     FIELD_GETTERS = {
-      'Syntax':        lambda r: f"`{r['syntax']}`",
-      'Sync/Async':    lambda r: f"`{r['Sync_Async']}`",
-      'Reentrancy':    lambda r: f"`{r['Reentrancy']}`",
-      'Return Value':  lambda r: f"`{r['ret']}`",
-      'In-Parameters': lambda r: ", ".join(r['inParams']),
-      'Out-Parameters':lambda r: ", ".join(r['outParams']),
-      'Function Type': lambda r: r['fnType'],
-      'Description':   lambda r: r.get('description', ''),
-      'Triggers':      lambda r: r['trigger'],
-      'Inputs':        lambda r: ", ".join(r['inputs']),
-      'Outputs':       lambda r: ", ".join(r['outputs']),
+      'Name':             lambda r: r['name'],
+      'Syntax':           lambda r: f"`{r['syntax']}`",
+      'Sync/Async':       lambda r: f"`{r['Sync_Async']}`",
+      'Reentrancy':       lambda r: f"`{r['Reentrancy']}`",
+      'Return Value':     lambda r: f"`{r['ret']}`",
+      'In-Parameters':    lambda r: ", ".join(r['inParams']),
+      'Out-Parameters':   lambda r: ", ".join(r['outParams']),
+      'Function Type':    lambda r: r['fnType'],
+      'Description':      lambda r: r.get('description', ''),
+      'Triggers':         lambda r: r['trigger'],
+      'Inputs':           lambda r: ", ".join(r['inputs']),
+      'Outputs':          lambda r: ", ".join(r['outputs']),
       'Invoked Operations': lambda r: ", ".join(r['invoked']),
       'Used Data Types':    lambda r: ", ".join(r['used']),
     }
 
     lines = []
+    # 1) record which fields were selected
+    lines.append(f"**Selected fields:** {', '.join(sel_fields)}")
+    lines.append("")
+
+    # 2) one table per function
     for r in rows:
-        lines.append(f"## {r['name']}\n")
+        lines.append(f"## {r['name']}")
+        lines.append("")
         lines.append("| Field | Value |")
         lines.append("|-------|-------|")
         for label in sel_fields:
-            if label == 'Name':
-                continue  # Name is the header, not a row field
             getter = FIELD_GETTERS.get(label)
             if getter:
-                lines.append(f"| {label} | {getter(r)} |")
+                value = getter(r)
+                lines.append(f"| {label} | {value} |")
         lines.append("")  # blank line between functions
 
-    with open(file_path, 'w', encoding='utf-8') as f:
-        f.write("\n".join(lines))
+    # 3) write to disk
+    Path(file_path).write_text("\n".join(lines), encoding="utf-8")
+
 
 def write_docx(source_path: str, swcName: str, rows: list[dict], sel_fields: list[str]):
     """

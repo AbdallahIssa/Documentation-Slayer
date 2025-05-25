@@ -1,58 +1,54 @@
 /*  Documentation-Slayer VS-Code side
  *  – runs parser.py in GUI mode whenever the command is invoked
+ *  – launches the bundled parser GUI whenever the command is invoked
  */
 
 import * as vscode from 'vscode';
-import * as path   from 'path';
 import { execFile } from 'child_process';
 
-export function activate(ctx: vscode.ExtensionContext) {
-  ctx.subscriptions.push(
+export function activate(context: vscode.ExtensionContext) {
+  context.subscriptions.push(
     vscode.commands.registerCommand(
       'Run-Documentation-Slayer.Run-Documentation-Slayer',
-      () => runExtractor(ctx)
+      () => runExtractor(context)
     )
   );
 }
 
-async function runExtractor(ctx: vscode.ExtensionContext) {
-  const editor = vscode.window.activeTextEditor;
-  if (!editor) {
+function runExtractor(context: vscode.ExtensionContext) {
+  // Check there’s an active editor (optional, GUI will re-ask anyway)
+  if (!vscode.window.activeTextEditor) {
     vscode.window.showWarningMessage('Open a C file first.');
     return;
   }
 
-  const pyCandidates = process.platform === 'win32'
-    ? ['py', 'python', 'python3']
-    : ['python3', 'python'];
+  // Pick the right executable name per platform
+  const exeName = process.platform === 'win32' ? 'parser.exe' : 'parser';
 
-  let pythonExe: string | null = null;
-  for (const exe of pyCandidates) {
-    try {
-      await new Promise<void>((res, rej) => {
-        execFile(exe, ['--version'], err => err ? rej(err) : res());
-      });
-      pythonExe = exe;
-      break;
-    } catch {
-      // try next
-    }
-  }
+  // Build a URI for the exe inside the extension
+  const exeUri = vscode.Uri.joinPath(context.extensionUri, exeName);
+  const exePath = exeUri.fsPath;
 
-  if (!pythonExe) {
-    vscode.window.showErrorMessage(
-      `No Python interpreter found. Tried: ${pyCandidates.join(', ')}`
-    );
-    return;
-  }
-
-  const pyPath = path.join(ctx.extensionPath, 'parser.py');
-  execFile(pythonExe, [pyPath], err => {
+  // Launch the GUI (no args → interactive mode)
+  execFile(exePath, [], (err, stdout, stderr) => {
     if (err) {
-      vscode.window.showErrorMessage(`Failed to launch GUI: ${err.message}`);
+      if ((err as any).code === 'ENOENT') {
+        vscode.window.showErrorMessage(
+          `Cannot find bundled parser at:\n${exePath}\n\n` +
+          `Make sure you’ve copied ${exeName} into the extension’s root folder.`
+        );
+      } else {
+        vscode.window.showErrorMessage(
+          `❌ Failed to launch Documentation Slayer GUI: ${err.message}`
+        );
+      }
+      return;
     }
+    if (stderr) {
+      vscode.window.showWarningMessage(`⚠️ Parser stderr:\n${stderr}`);
+    }
+    // GUI runs independently; no further action here
   });
-  // execFile(pythonExe, [pyPath], …)
 }
 
 export function deactivate() {}

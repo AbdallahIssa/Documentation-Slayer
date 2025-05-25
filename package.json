@@ -3,7 +3,7 @@
   "displayName": "Documentation Slayer",
   "description": "Automate the process of unit design Documentation for Classic AUTOSAR Projects and exports them to a structured Excel spreadsheet.",
   "publisher": "AbdallahIssa",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "icon": "Vehiclevo_Logo.jpg",
   "engines": {
     "vscode": "^1.100.0"
