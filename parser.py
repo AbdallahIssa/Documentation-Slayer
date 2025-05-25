@@ -402,8 +402,21 @@ def show_gui():
     root = tk.Tk()
     root.title("Documentation Slayer")
     root.configure(bg="#ececec")
-    root.geometry("900x550")
-    root.minsize(700, 450)
+    root.iconbitmap("vehiclevo_logo_Basic.ico")
+    root.geometry("700x350")
+    root.minsize(700, 350)
+    root.maxsize(700, 350)
+    root.minsize(700, 350)
+    root.resizable(False, False) # no resizing
+
+    root.update_idletasks()         # ensure winfo_width/height are accurate
+    w = root.winfo_width()
+    h = root.winfo_height()
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
+    x = (sw - w) // 2
+    y = (sh - h) // 2
+    root.geometry(f"{w}x{h}+{x}+{y}")
 
     field_vars  = {f: tk.BooleanVar(value=True) for f in fields}
     format_vars = {f: tk.BooleanVar(value=True) for f in formats}
