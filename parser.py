@@ -402,7 +402,17 @@ def show_gui():
     root = tk.Tk()
     root.title("Documentation Slayer")
     root.configure(bg="#ececec")
-    root.iconbitmap("vehiclevo_logo_Basic.ico")
+    if getattr(sys, "frozen", False):
+        # running from PyInstaller bundle
+        base_path = Path(sys._MEIPASS)
+    else:
+        # running as a normal script
+        base_path = Path(__file__).parent
+    icon_path = base_path / "vehiclevo_logo_Basic.ico"
+    try:
+        root.iconbitmap(str(icon_path))
+    except Exception:
+        pass  # skip if missing or invalid
     root.geometry("700x350")
     root.minsize(700, 350)
     root.maxsize(700, 350)

@@ -5,7 +5,7 @@ a = Analysis(
     ['parser.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('vehiclevo_logo_Basic.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
