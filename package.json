@@ -3,7 +3,7 @@
   "displayName": "Documentation Slayer",
   "description": "Automates the creation of unit-design documentation for both Classic AUTOSAR and non-AUTOSAR projects.\nIt lets you export your results as a structured Excel spreadsheet, a Markdown file, or a Word document.\njust pick the format you need",
   "publisher": "AbdallahIssa",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "icon": "Vehiclevo_Logo.jpg",
   "engines": {
     "vscode": "^1.100.0"
