@@ -5,6 +5,7 @@ import sys
 import argparse
 import os
 import platform
+import activity_diagram
 from pathlib import Path
 from docx import Document
 from docx.oxml import OxmlElement
@@ -13,6 +14,51 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
+
+
+def ask_password():
+    """Ask for password to access Activity Diagram tab"""
+    password_window = tk.Toplevel()
+    password_window.title("Access Activity Diagram")
+    password_window.geometry("300x150")
+    password_window.resizable(False, False)
+    password_window.grab_set()  # Make it modal
+    
+    # Center the window
+    password_window.update_idletasks()
+    w = password_window.winfo_width()
+    h = password_window.winfo_height()
+    sw = password_window.winfo_screenwidth()
+    sh = password_window.winfo_screenheight()
+    x = (sw - w) // 2
+    y = (sh - h) // 2
+    password_window.geometry(f"{w}x{h}+{x}+{y}")
+    
+    ttk.Label(password_window, text="Enter password to access Activity Diagram:").pack(pady=10)
+    
+    password_var = tk.StringVar()
+    password_entry = ttk.Entry(password_window, textvariable=password_var, show="*", width=30)
+    password_entry.pack(pady=5)
+    password_entry.focus()
+    
+    result = {"access_granted": False}
+    
+    def check_password():
+        if password_var.get() == "Vehiclevo@123":
+            result["access_granted"] = True
+            password_window.destroy()
+        else:
+            ttk.Label(password_window, text="Wrong password!", foreground="red").pack(pady=5)
+            password_entry.delete(0, tk.END)
+    
+    def on_enter(event):
+        check_password()
+    
+    password_entry.bind('<Return>', on_enter)
+    ttk.Button(password_window, text="OK", command=check_password).pack(pady=10)
+    
+    password_window.wait_window()
+    return result["access_granted"]
 
 def open_file(path: str):
     """Open a file with the default OS application."""
@@ -24,97 +70,163 @@ def open_file(path: str):
     else:
         os.system(f'xdg-open "{path}"')
 
-def write_excel(file_path: str, rows: list[dict], sel_fields: list[str]):
+def write_excel(file_path: str, functions: list[dict], macros: list[dict], variables: list[dict], 
+                sel_function_fields: list[str], sel_macro_fields: list[str], sel_variable_fields: list[str]):
     """
-    Write an .xlsx with one sheet named
-    "Runnables and static functions".
-    Only the sel_fields columns are written.
+    Write an .xlsx with three sheets: Functions, Macros, and Variables.
+    Only the selected fields columns are written for each sheet.
     Headers are styled bold+red font on yellow fill.
     """
-    ALL_HEADERS = [
+    FUNCTION_HEADERS = [
       'Name', 'Syntax', 'Return Value', 'In-Parameters', 'Out-Parameters',
       'Function Type', 'Description', 'Sync/Async', 'Reentrancy',
       'Triggers', 'Inputs', 'Outputs',
       'Invoked Operations', 'Used Data Types'
     ]
-    headers = [h for h in ALL_HEADERS if h in sel_fields]
+    
+    MACRO_HEADERS = [
+        'Name', 'Value'
+    ]
+    
+    VARIABLE_HEADERS = [
+        'Name', 'Data Type', 'Initial Value', 'Scope'
+    ]
 
     path = Path(file_path)
     if path.exists():
         wb = load_workbook(str(path))
+        # Remove all existing sheets
+        for name in list(wb.sheetnames):
+            wb.remove(wb[name])
     else:
         wb = Workbook()
+        # Remove default sheet
+        wb.remove(wb.active)
 
-    sheet_name = "Runnables and static functions"
-    # remove all other sheets
-    for name in list(wb.sheetnames):
-        if name != sheet_name:
-            wb.remove(wb[name])
-    # get or create our sheet
-    if sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-    else:
-        ws = wb.create_sheet(title=sheet_name)
-
-    # write header
-    ws.append(headers)
     yellow = PatternFill(fill_type="solid", fgColor="FFFFFF00")
-    red    = Font(bold=True, color="FFFF0000")
-    for cell in ws[1]:
-        cell.fill = yellow
-        cell.font = red
+    red = Font(bold=True, color="FFFF0000")
 
-    # append rows
-    for r in rows:
-        row = []
-        for h in headers:
-            if h == 'Name':
-                row.append(r['name'])
-            elif h == 'Syntax':
-                row.append(r['syntax'])
-            elif h == 'Return Value':
-                row.append(r['ret'])
-            elif h == 'In-Parameters':
-                row.append(", ".join(r['inParams']))
-            elif h == 'Out-Parameters':
-                row.append(", ".join(r['outParams']))
-            elif h == 'Function Type':
-                row.append(r['fnType'])
-            elif h == 'Description':
-                row.append(r.get('description', ''))
-            elif h == 'Sync/Async':
-                row.append(r['Sync_Async'])
-            elif h == 'Reentrancy':
-                row.append(r['Reentrancy'])
-            elif h == 'Triggers':
-                row.append(r['trigger'])
-            elif h == 'Inputs':
-                row.append(", ".join(r['inputs']))
-            elif h == 'Outputs':
-                row.append(", ".join(r['outputs']))
-            elif h == 'Invoked Operations':
-                row.append(", ".join(r['invoked']))
-            elif h == 'Used Data Types':
-                row.append(", ".join(r['used']))
-        ws.append(row)
+    # Functions sheet
+    if functions:
+        ws_functions = wb.create_sheet(title="Runnables and static functions")
+        function_headers = [h for h in FUNCTION_HEADERS if h in sel_function_fields]
+        ws_functions.append(function_headers)
+        
+        for cell in ws_functions[1]:
+            cell.fill = yellow
+            cell.font = red
 
-    # auto-adjust column widths
-    for col in ws.columns:
-        max_length = 0
-        col_letter = col[0].column_letter
-        for cell in col:
-            val = str(cell.value or "")
-            max_length = max(max_length, len(val))
-        ws.column_dimensions[col_letter].width = max_length + 2
+        for r in functions:
+            row = []
+            for h in function_headers:
+                if h == 'Name':
+                    row.append(r['name'])
+                elif h == 'Syntax':
+                    row.append(r['syntax'])
+                elif h == 'Return Value':
+                    row.append(r['ret'])
+                elif h == 'In-Parameters':
+                    row.append(", ".join(r['inParams']))
+                elif h == 'Out-Parameters':
+                    row.append(", ".join(r['outParams']))
+                elif h == 'Function Type':
+                    row.append(r['fnType'])
+                elif h == 'Description':
+                    row.append(r.get('description', ''))
+                elif h == 'Sync/Async':
+                    row.append(r['Sync_Async'])
+                elif h == 'Reentrancy':
+                    row.append(r['Reentrancy'])
+                elif h == 'Triggers':
+                    row.append(r['trigger'])
+                elif h == 'Inputs':
+                    row.append(", ".join(r['inputs']))
+                elif h == 'Outputs':
+                    row.append(", ".join(r['outputs']))
+                elif h == 'Invoked Operations':
+                    row.append(", ".join(r['invoked']))
+                elif h == 'Used Data Types':
+                    row.append(", ".join(r['used']))
+            ws_functions.append(row)
+
+        # Auto-adjust column widths
+        for col in ws_functions.columns:
+            max_length = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                val = str(cell.value or "")
+                max_length = max(max_length, len(val))
+            ws_functions.column_dimensions[col_letter].width = max_length + 2
+
+    # Macros sheet
+    if macros:
+        ws_macros = wb.create_sheet(title="Macros")
+        macro_headers = [h for h in MACRO_HEADERS if h in sel_macro_fields]
+        ws_macros.append(macro_headers)
+        
+        for cell in ws_macros[1]:
+            cell.fill = yellow
+            cell.font = red
+
+        for r in macros:
+            row = []
+            for h in macro_headers:
+                if h == 'Name':
+                    row.append(r['name'])
+                elif h == 'Value':
+                    row.append(r['value'])
+            ws_macros.append(row)
+
+        # Auto-adjust column widths
+        for col in ws_macros.columns:
+            max_length = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                val = str(cell.value or "")
+                max_length = max(max_length, len(val))
+            ws_macros.column_dimensions[col_letter].width = max_length + 2
+
+    # Variables sheet
+    if variables:
+        ws_variables = wb.create_sheet(title="Variables")
+        variable_headers = [h for h in VARIABLE_HEADERS if h in sel_variable_fields]
+        ws_variables.append(variable_headers)
+        
+        for cell in ws_variables[1]:
+            cell.fill = yellow
+            cell.font = red
+
+        for r in variables:
+            row = []
+            for h in variable_headers:
+                if h == 'Name':
+                    row.append(r['name'])
+                elif h == 'Data Type':
+                    row.append(r['dataType'])
+                elif h == 'Initial Value':
+                    row.append(r['initialValue'])
+                elif h == 'Scope':
+                    row.append(r['scope'])
+            ws_variables.append(row)
+
+        # Auto-adjust column widths
+        for col in ws_variables.columns:
+            max_length = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                val = str(cell.value or "")
+                max_length = max(max_length, len(val))
+            ws_variables.column_dimensions[col_letter].width = max_length + 2
 
     wb.save(str(path))
 
-def write_markdown(file_path: str, rows: list[dict], sel_fields: list[str]):
+def write_markdown(file_path: str, functions: list[dict], macros: list[dict], variables: list[dict],
+                   sel_function_fields: list[str], sel_macro_fields: list[str], sel_variable_fields: list[str]):
     """
-    Write a Markdown file with a table for each function.
-    Only the sel_fields are included in each table.
+    Write a Markdown file with tables for functions, macros, and variables.
+    Only the selected fields are included in each table.
     """
-    FIELD_GETTERS = {
+    FUNCTION_FIELD_GETTERS = {
       'Name':             lambda r: r['name'],
       'Syntax':           lambda r: f"`{r['syntax']}`",
       'Sync/Async':       lambda r: f"`{r['Sync_Async']}`",
@@ -131,32 +243,81 @@ def write_markdown(file_path: str, rows: list[dict], sel_fields: list[str]):
       'Used Data Types':    lambda r: ", ".join(r['used']),
     }
 
+    MACRO_FIELD_GETTERS = {
+        'Name':  lambda r: r['name'],
+        'Value': lambda r: f"`{r['value']}`",
+    }
+
+    VARIABLE_FIELD_GETTERS = {
+        'Name':         lambda r: r['name'],
+        'Data Type':    lambda r: f"`{r['dataType']}`",
+        'Initial Value': lambda r: f"`{r['initialValue']}`",
+        'Scope':        lambda r: r['scope'],
+    }
+
     lines = []
-    # 1) record which fields were selected
-    lines.append(f"**Selected fields:** {', '.join(sel_fields)}")
-    lines.append("")
 
-    # 2) one table per function
-    for r in rows:
-        lines.append(f"## {r['name']}")
+    # Functions section
+    if functions:
+        lines.append("# Functions")
+        lines.append(f"**Selected fields:** {', '.join(sel_function_fields)}")
         lines.append("")
-        lines.append("| Field | Value |")
-        lines.append("|-------|-------|")
-        for label in sel_fields:
-            getter = FIELD_GETTERS.get(label)
-            if getter:
-                value = getter(r)
-                lines.append(f"| {label} | {value} |")
-        lines.append("")  # blank line between functions
 
-    # 3) write to disk
+        for r in functions:
+            lines.append(f"## {r['name']}")
+            lines.append("")
+            lines.append("| Field | Value |")
+            lines.append("|-------|-------|")
+            for label in sel_function_fields:
+                getter = FUNCTION_FIELD_GETTERS.get(label)
+                if getter:
+                    value = getter(r)
+                    lines.append(f"| {label} | {value} |")
+            lines.append("")
+
+    # Macros section
+    if macros:
+        lines.append("# Macros")
+        lines.append(f"**Selected fields:** {', '.join(sel_macro_fields)}")
+        lines.append("")
+
+        for r in macros:
+            lines.append(f"## {r['name']}")
+            lines.append("")
+            lines.append("| Field | Value |")
+            lines.append("|-------|-------|")
+            for label in sel_macro_fields:
+                getter = MACRO_FIELD_GETTERS.get(label)
+                if getter:
+                    value = getter(r)
+                    lines.append(f"| {label} | {value} |")
+            lines.append("")
+
+    # Variables section
+    if variables:
+        lines.append("# Variables")
+        lines.append(f"**Selected fields:** {', '.join(sel_variable_fields)}")
+        lines.append("")
+
+        for r in variables:
+            lines.append(f"## {r['name']}")
+            lines.append("")
+            lines.append("| Field | Value |")
+            lines.append("|-------|-------|")
+            for label in sel_variable_fields:
+                getter = VARIABLE_FIELD_GETTERS.get(label)
+                if getter:
+                    value = getter(r)
+                    lines.append(f"| {label} | {value} |")
+            lines.append("")
+
     Path(file_path).write_text("\n".join(lines), encoding="utf-8")
 
-
-def write_docx(source_path: str, swcName: str, rows: list[dict], sel_fields: list[str]):
+def write_docx(source_path: str, swcName: str, functions: list[dict], macros: list[dict], variables: list[dict],
+               sel_function_fields: list[str], sel_macro_fields: list[str], sel_variable_fields: list[str]):
     """
     Generate a Word .docx per AUTOSAR template.
-    Only includes sel_fields.
+    Includes functions, macros, and variables with only selected fields.
     """
     def shade_cell(cell, rgb="9D9D9D"):
         tcPr = cell._tc.get_or_add_tcPr()
@@ -165,48 +326,101 @@ def write_docx(source_path: str, swcName: str, rows: list[dict], sel_fields: lis
         tcPr.append(shd)
 
     doc = Document()
-    for r in rows:
-        doc.add_paragraph(f"[{r['name']}]", style='Heading 1')
-        tbl = doc.add_table(rows=0, cols=2)
-        tbl.style = 'Table Grid'
 
-        def add_row(label, value):
-            c0, c1 = tbl.add_row().cells
-            c0.text = label
-            c1.text = value or ""
-            shade_cell(c0)
+    # Functions section
+    if functions:
+        doc.add_heading('Functions', level=1)
+        
+        for r in functions:
+            doc.add_paragraph(f"[{r['name']}]", style='Heading 2')
+            tbl = doc.add_table(rows=0, cols=2)
+            tbl.style = 'Table Grid'
 
-        if 'Name' in sel_fields:
-            add_row("Service Name", r['name'])
-        if 'Syntax' in sel_fields:
-            add_row("Syntax", r['syntax'])
-        if 'Sync/Async' in sel_fields:
-            add_row("Sync/Async", r['Sync_Async'])
-        if 'Reentrancy' in sel_fields:
-            add_row("Reentrancy", r['Reentrancy'])
-        if 'In-Parameters' in sel_fields:
-            add_row("Parameters (in)", ", ".join(r['inParams']))
-        if 'Out-Parameters' in sel_fields:
-            add_row("Parameters (out)", ", ".join(r['outParams']))
-        if 'Function Type' in sel_fields:
-            add_row("Function Type", r['fnType'])
-        if 'Description' in sel_fields:
-            add_row("Description", r.get('description', ''))
-        if 'Triggers' in sel_fields:
-            add_row("Triggers", r['trigger'])
-        if 'Inputs' in sel_fields:
-            add_row("Inputs", ", ".join(r['inputs']))
-        if 'Outputs' in sel_fields:
-            add_row("Outputs", ", ".join(r['outputs']))
-        if 'Invoked Operations' in sel_fields:
-            add_row("Invoked Operations", ", ".join(r['invoked']))
-        if 'Used Data Types' in sel_fields:
-            add_row("Used Data Types", ", ".join(r['used']))
+            def add_row(label, value):
+                c0, c1 = tbl.add_row().cells
+                c0.text = label
+                c1.text = value or ""
+                shade_cell(c0)
 
-        doc.add_page_break()
+            if 'Name' in sel_function_fields:
+                add_row("Service Name", r['name'])
+            if 'Syntax' in sel_function_fields:
+                add_row("Syntax", r['syntax'])
+            if 'Sync/Async' in sel_function_fields:
+                add_row("Sync/Async", r['Sync_Async'])
+            if 'Reentrancy' in sel_function_fields:
+                add_row("Reentrancy", r['Reentrancy'])
+            if 'In-Parameters' in sel_function_fields:
+                add_row("Parameters (in)", ", ".join(r['inParams']))
+            if 'Out-Parameters' in sel_function_fields:
+                add_row("Parameters (out)", ", ".join(r['outParams']))
+            if 'Function Type' in sel_function_fields:
+                add_row("Function Type", r['fnType'])
+            if 'Description' in sel_function_fields:
+                add_row("Description", r.get('description', ''))
+            if 'Triggers' in sel_function_fields:
+                add_row("Triggers", r['trigger'])
+            if 'Inputs' in sel_function_fields:
+                add_row("Inputs", ", ".join(r['inputs']))
+            if 'Outputs' in sel_function_fields:
+                add_row("Outputs", ", ".join(r['outputs']))
+            if 'Invoked Operations' in sel_function_fields:
+                add_row("Invoked Operations", ", ".join(r['invoked']))
+            if 'Used Data Types' in sel_function_fields:
+                add_row("Used Data Types", ", ".join(r['used']))
+
+            doc.add_page_break()
+
+    # Macros section
+    if macros:
+        doc.add_heading('Macros', level=1)
+        
+        for r in macros:
+            doc.add_paragraph(f"[{r['name']}]", style='Heading 2')
+            tbl = doc.add_table(rows=0, cols=2)
+            tbl.style = 'Table Grid'
+
+            def add_row(label, value):
+                c0, c1 = tbl.add_row().cells
+                c0.text = label
+                c1.text = value or ""
+                shade_cell(c0)
+
+            if 'Name' in sel_macro_fields:
+                add_row("Macro Name", r['name'])
+            if 'Value' in sel_macro_fields:
+                add_row("Value", r['value'])
+
+            doc.add_page_break()
+
+    # Variables section
+    if variables:
+        doc.add_heading('Variables', level=1)
+        
+        for r in variables:
+            doc.add_paragraph(f"[{r['name']}]", style='Heading 2')
+            tbl = doc.add_table(rows=0, cols=2)
+            tbl.style = 'Table Grid'
+
+            def add_row(label, value):
+                c0, c1 = tbl.add_row().cells
+                c0.text = label
+                c1.text = value or ""
+                shade_cell(c0)
+
+            if 'Name' in sel_variable_fields:
+                add_row("Variable Name", r['name'])
+            if 'Data Type' in sel_variable_fields:
+                add_row("Data Type", r['dataType'])
+            if 'Initial Value' in sel_variable_fields:
+                add_row("Initial Value", r['initialValue'])
+            if 'Scope' in sel_variable_fields:
+                add_row("Scope", r['scope'])
+
+            doc.add_page_break()
 
     excel_path = Path(source_path).with_suffix('.xlsx')
-    docx_path  = excel_path.with_suffix('.docx')
+    docx_path = excel_path.with_suffix('.docx')
     doc.save(str(docx_path))
 
 def classify_params(body: str, params: list[str]) -> dict:
@@ -233,9 +447,243 @@ def get_trigger_comment(comments: list, pos: int) -> str:
             best_end, best_txt = end, txt
     return best_txt
 
-def parse_file(src: str) -> list:
-    rows = []
-    reserved = {"if","for","while","switch","do","else","case","sizeof","abs","return"}
+def parse_macros(src: str) -> list[dict]:
+    """Extract #define macros from C source code."""
+    # Regex for a macro header: #define NAME [optional(param,list)] body-fragment
+    HEADER_RE = re.compile(r"^\s*#define\s+(\w+)\s*(\([^)]*\))?\s*(.*)", re.MULTILINE)
+    
+    def should_skip(body: str) -> bool:
+        """Return True if the macro should be excluded."""
+        stripped = body.strip()
+        if not stripped:
+            return True
+        return False
+
+    lines = src.split('\n')
+    macros = []
+    
+    i = 0
+    while i < len(lines):
+        m = HEADER_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+
+        name = m.group(1)              # macro name
+        paramlist = m.group(2)         # None if object-like macro
+        first = m.group(3).rstrip()    # first chunk of body
+
+        # Gather continuation lines ending in "\"
+        body_parts = [first]
+        while body_parts and body_parts[-1].endswith("\\"):
+            body_parts[-1] = body_parts[-1][:-1].rstrip()   # drop trailing "\"
+            i += 1
+            if i >= len(lines):
+                break
+            body_parts.append(lines[i].rstrip())
+
+        body_text = " ".join(part.strip() for part in body_parts).strip()
+
+        if not should_skip(body_text):
+            macros.append({
+                "name": name,
+                "value": body_text
+            })
+
+        i += 1
+
+    return macros
+
+def parse_variables(src: str) -> list[dict]:
+    """Extract global and static global variables from C source code."""
+    variables = []
+    
+    # Remove preprocessor directives and comments to avoid false matches
+    src_clean = re.sub(r'^\s*#.*$', '', src, flags=re.MULTILINE)
+    src_clean = re.sub(r'/\*[\s\S]*?\*/|//.*', '', src_clean)
+    
+    # First, identify all function bodies to exclude local variables
+    function_bodies = []
+    
+    # Find all functions (including FUNC macros, static, and global functions)
+    func_patterns = [
+        re.compile(r'FUNC\s*\([^)]*\)\s*[A-Za-z_]\w*\s*\([^)]*\)\s*\{', re.MULTILINE),
+        re.compile(r'(?:static\s+)?(?:inline\s+)?[A-Za-z_]\w*(?:\s*\*+)?\s+[A-Za-z_]\w*\s*\([^)]*\)\s*\{', re.MULTILINE)
+    ]
+    
+    for pattern in func_patterns:
+        for match in pattern.finditer(src_clean):
+            # Find the complete function body
+            start_pos = match.end() - 1  # position of opening '{'
+            brace_count = 1
+            pos = start_pos + 1
+            
+            while pos < len(src_clean) and brace_count > 0:
+                if src_clean[pos] == '{':
+                    brace_count += 1
+                elif src_clean[pos] == '}':
+                    brace_count -= 1
+                pos += 1
+            
+            if brace_count == 0:
+                function_bodies.append((start_pos, pos))
+            else:
+                 # If we reached end of file with unclosed braces, don't include this as a function body
+                 # This prevents the entire end of file from being marked as "inside function"
+                 pass
+    
+    def is_inside_function(position):
+        """Check if a position is inside any function body."""
+        for start, end in function_bodies:
+            if start <= position <= end:
+                return True
+        return False
+    
+    # Debug: Print function bodies for troubleshooting
+    # print(f"Function bodies detected: {function_bodies}")
+
+    # Pattern for extern variable declarations
+    extern_var_pattern = re.compile(r'''
+        ^[ \t]*                                    # start of line, optional whitespace
+        (extern\s+)                                # extern keyword
+        ([A-Za-z_]\w*(?:\s*\*+)?)                 # data type (with optional pointers)
+        \s+                                        # whitespace
+        ([A-Za-z_]\w*)                            # variable name
+        \s*;(?=\s|$)                                       # semicolon (extern vars don't have initialization)
+        ''', re.MULTILINE | re.VERBOSE)
+    
+    # Pattern for static/regular variable declarations
+    static_var_pattern = re.compile(r'''
+        ^[ \t]*                                    # start of line, optional whitespace
+        (static\s+)?                               # optional 'static' keyword
+        ([A-Za-z_]\w*(?:\s*\*+)?)                 # data type (with optional pointers)
+        \s+                                        # whitespace
+        ([A-Za-z_]\w*)                            # variable name
+        (?:\s*=\s*([^;]+))?                       # optional initialization
+        \s*;(?=\s|$)                                       # semicolon
+        ''', re.MULTILINE | re.VERBOSE)
+    
+    # Array pattern: type name[size] = {...};
+    static_array_pattern = re.compile(r'''
+        ^[ \t]*                                    # start of line, optional whitespace
+        (static\s+)?                               # optional 'static' keyword
+        ([A-Za-z_]\w*(?:\s*\*+)?)                 # data type
+        \s+                                        # whitespace
+        ([A-Za-z_]\w*)                            # variable name
+        \s*\[([^\]]*)\]                           # array brackets with size
+        (?:\s*=\s*\{([^}]*)\})?                   # optional array initialization
+        \s*;(?=\s|$)                                       # semicolon
+        ''', re.MULTILINE | re.VERBOSE)
+    
+    # Keywords to exclude (function keywords, control flow, etc.)
+    exclude_keywords = {
+        'if', 'for', 'while', 'switch', 'do', 'else', 'case', 'return',
+        'goto', 'break', 'continue', 'sizeof', 'typedef', 'struct', 'union',
+        'enum', 'extern', 'register', 'auto', 'volatile', 'const', 'inline',
+        'unsigned', 'signed', 'long', 'short', 'void', 'char', 'int', 'float', 'double'
+    }
+    
+    # Find extern variable declarations
+    for match in extern_var_pattern.finditer(src_clean):
+        if is_inside_function(match.start()):
+            continue
+            
+        extern_kw = match.group(1)
+        data_type = match.group(2).strip()
+        var_name = match.group(3)
+        
+        if extern_kw and var_name not in exclude_keywords and data_type.lower() not in exclude_keywords:
+            variables.append({
+                "name": var_name,
+                "dataType": data_type,
+                "initialValue": "",
+                "scope": "Extern"
+            })
+    
+    # Find static/regular variable declarations
+    for match in static_var_pattern.finditer(src_clean):
+        if is_inside_function(match.start()):
+            continue
+            
+        static_kw = match.group(1)
+        data_type = match.group(2).strip()
+        var_name = match.group(3)
+        init_value = match.group(4).strip() if match.group(4) else ""
+        
+        if var_name in exclude_keywords or data_type.lower() in exclude_keywords:
+            continue
+            
+        # Check if this looks like a function (has parentheses after the name)
+        next_pos = match.end()
+        if next_pos < len(src_clean):
+            remaining = src_clean[next_pos:next_pos+50]
+            if '(' in remaining.split(';')[0]:
+                continue
+        
+        # Skip if it looks like a function pointer or typedef
+        full_match = match.group(0)
+        if '(*' in full_match or 'typedef' in full_match:
+            continue
+        
+        scope = "Static Global" if static_kw else "Global"
+        
+        variables.append({
+            "name": var_name,
+            "dataType": data_type,
+            "initialValue": init_value,
+            "scope": scope
+        })
+
+
+    # Find array declarations
+    for match in static_array_pattern.finditer(src_clean):
+        if is_inside_function(match.start()):
+            continue
+            
+        static_kw = match.group(1)
+        data_type = match.group(2).strip()
+        var_name = match.group(3)
+        array_size = match.group(4).strip() if match.group(4) else ""
+        init_value = match.group(5).strip() if match.group(5) else ""
+        
+        if var_name in exclude_keywords or data_type.lower() in exclude_keywords:
+            continue
+            
+        scope = "Static Global" if static_kw else "Global"
+        full_type = f"{data_type}[{array_size}]"
+        
+        variables.append({
+            "name": var_name,
+            "dataType": full_type,
+            "initialValue": init_value,
+            "scope": scope
+        })
+
+    # Post-processing: Clean up any remaining preprocessor keywords from datatypes
+    preprocessor_keywords = {
+        'endif', 'if', 'ifdef', 'ifndef', 'else', 'elif', 'define', 'include', 
+        'undef', 'pragma', 'warning', 'error', 'line'
+    }
+    
+    cleaned_variables = []
+    for var in variables:
+        # Check if dataType contains any preprocessor keywords
+        datatype_words = var['dataType'].lower().split()
+        if not any(word in preprocessor_keywords for word in datatype_words):
+            cleaned_variables.append(var)
+        # Optionally, I can clean individual words instead of removing entire variable:
+        # cleaned_datatype = ' '.join(word for word in var['dataType'].split() 
+        #                            if word.lower() not in preprocessor_keywords)
+        # if cleaned_datatype.strip():
+        #     var['dataType'] = cleaned_datatype.strip()
+        #     cleaned_variables.append(var)
+    
+    return cleaned_variables
+
+def parse_file(src: str) -> tuple[list, list, list]:
+    """Parse file and return (functions, macros, variables)."""
+    functions = []
+    reserved = {"if","for","while","switch","do","else","case","sizeof","abs","return", "endif"}
     exclude_invoked = {
         "VStdLib_MemCpy","VStdLib_MemSet","VStdLib_MemCmp",
         "memcmp","memcpy","memset","sizeof","abs","return"
@@ -365,7 +813,7 @@ def parse_file(src: str) -> list:
         reentrancy = ""
         description = ""
 
-        rows.append({
+        functions.append({
             "name":       name,
             "syntax":     syntax,
             "ret":        retType,
@@ -389,14 +837,29 @@ def parse_file(src: str) -> list:
     for m in global_rx.finditer(src):
         extract(m, "Global")
 
-    return rows
+    # Parse macros and variables
+    macros = parse_macros(src)
+    variables = parse_variables(src)
+
+    return functions, macros, variables
 
 def show_gui():
-    fields = [
+    function_fields = [
       "Name", "Description", "Syntax", "Triggers", "In-Parameters", "Out-Parameters",
       "Return Value", "Function Type", "Inputs", "Outputs",
       "Invoked Operations", "Used Data Types", "Sync/Async", "Reentrancy"
     ]
+    
+    macro_fields = [
+        "Name", "Value"
+    ]
+    
+    variable_fields = [
+        "Name", "Data Type", "Initial Value", "Scope"
+    ]
+
+    activity_fields = [ "Generate Activity Diagram" ]
+    
     formats = ["Excel", "Word", "MD"]
 
     root = tk.Tk()
@@ -413,10 +876,9 @@ def show_gui():
         root.iconbitmap(str(icon_path))
     except Exception:
         pass  # skip if missing or invalid
-    root.geometry("700x350")
-    root.minsize(700, 350)
-    root.maxsize(700, 350)
-    root.minsize(700, 350)
+    root.geometry("900x600")
+    root.minsize(900, 600)
+    root.maxsize(900, 600)
     root.resizable(False, False) # no resizing
 
     root.update_idletasks()         # ensure winfo_width/height are accurate
@@ -428,35 +890,91 @@ def show_gui():
     y = (sh - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
 
-    field_vars  = {f: tk.BooleanVar(value=True) for f in fields}
+    # Create notebook for tabs
+    notebook = ttk.Notebook(root)
+    notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # Functions tab
+    functions_frame = ttk.Frame(notebook)
+    notebook.add(functions_frame, text="Functions")
+    
+    function_vars = {f: tk.BooleanVar(value=True) for f in function_fields}
+    
+    ttk.Label(functions_frame, text="Select function fields:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+    for i, f in enumerate(function_fields):
+        chk = ttk.Checkbutton(functions_frame, text=f, variable=function_vars[f])
+        chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
+
+    # Macros tab
+    macros_frame = ttk.Frame(notebook)
+    notebook.add(macros_frame, text="Macros")
+    
+    macro_vars = {f: tk.BooleanVar(value=True) for f in macro_fields}
+    
+    ttk.Label(macros_frame, text="Select macro fields:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+    for i, f in enumerate(macro_fields):
+        chk = ttk.Checkbutton(macros_frame, text=f, variable=macro_vars[f])
+        chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
+
+    # Variables tab
+    variables_frame = ttk.Frame(notebook)
+    notebook.add(variables_frame, text="Variables")
+    
+    variable_vars = {f: tk.BooleanVar(value=True) for f in variable_fields}
+    
+    ttk.Label(variables_frame, text="Select variable fields:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+    for i, f in enumerate(variable_fields):
+        chk = ttk.Checkbutton(variables_frame, text=f, variable=variable_vars[f])
+        chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
+
+
+    # Activity Diagram tab (password protected)
+    activity_frame = ttk.Frame(notebook)
+    activity_vars = {f: tk.BooleanVar(value=True) for f in activity_fields}
+    
+    def on_activity_tab_selected(event):
+        selected_tab = event.widget.tab('current')['text']
+        if selected_tab == "Activity Diagram":
+            if not ask_password():
+                # If password wrong, go back to Variables tab
+                notebook.select(2)  # Variables tab index
+                return
+    
+    notebook.bind("<<NotebookTabChanged>>", on_activity_tab_selected)
+    notebook.add(activity_frame, text="Activity Diagram")
+    
+    ttk.Label(activity_frame, text="Select activity diagram options:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+    for i, f in enumerate(activity_fields):
+        chk = ttk.Checkbutton(activity_frame, text=f, variable=activity_vars[f])
+        chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
+
+    # Settings frame (at bottom)
+    settings_frame = ttk.Frame(root)
+    settings_frame.pack(fill="x", padx=10, pady=(0, 10))
+
     format_vars = {f: tk.BooleanVar(value=True) for f in formats}
-    save_dir    = tk.StringVar(value=str(Path.cwd()))
+    save_dir = tk.StringVar(value=str(Path.cwd()))
 
-    frm = ttk.Frame(root, padding=10)
-    frm.pack(fill="both", expand=True)
-
-    ttk.Label(frm, text="Select fields:").grid(row=0, column=0, sticky="w")
-    for i, f in enumerate(fields, 1):
-        chk = ttk.Checkbutton(frm, text=f, variable=field_vars[f])
-        chk.grid(row=(i-1)//3+1, column=(i-1)%3, sticky="w", padx=15, pady=5)
-
-    ttk.Label(frm, text="Select formats:").grid(row=6, column=0, sticky="w", pady=(10,0))
-    for i, fmt in enumerate(formats, 7):
-        chk = ttk.Checkbutton(frm, text=fmt, variable=format_vars[fmt])
-        chk.grid(row=6 + (i-7)//3+1, column=(i-7)%3, sticky="w", padx=15, pady=5)
+    ttk.Label(settings_frame, text="Select formats:").grid(row=0, column=0, sticky="w", pady=5)
+    for i, fmt in enumerate(formats):
+        chk = ttk.Checkbutton(settings_frame, text=fmt, variable=format_vars[fmt])
+        chk.grid(row=0, column=i+1, sticky="w", padx=15, pady=5)
 
     def choose_dir():
         d = filedialog.askdirectory()
         if d:
             save_dir.set(d)
-    ttk.Button(frm, text="Save to…", command=choose_dir).grid(row=10, column=0, sticky="w", pady=(10,0))
-    ttk.Label(frm, textvariable=save_dir).grid(row=10, column=1, columnspan=2, sticky="w")
+    ttk.Button(settings_frame, text="Save to…", command=choose_dir).grid(row=1, column=0, sticky="w", pady=5)
+    ttk.Label(settings_frame, textvariable=save_dir).grid(row=1, column=1, columnspan=3, sticky="w")
 
     def on_run():
         # Gather user selections
-        sel_fields  = [f for f, v in field_vars.items() if v.get()]
+        sel_function_fields = [f for f, v in function_vars.items() if v.get()]
+        sel_macro_fields = [f for f, v in macro_vars.items() if v.get()]
+        sel_variable_fields = [f for f, v in variable_vars.items() if v.get()]
+        sel_activity_fields = [f for f, v in activity_vars.items() if v.get()]
         sel_formats = [f for f, v in format_vars.items() if v.get()]
-        outdir      = Path(save_dir.get())
+        outdir = Path(save_dir.get())
 
         # Ask for the C source file
         cfile = filedialog.askopenfilename(
@@ -467,38 +985,50 @@ def show_gui():
             return
 
         # Parse the file
-        src  = open(cfile, encoding="utf-8").read()
-        rows = parse_file(src)
+        src = open(cfile, encoding="utf-8").read()
+        functions, macros, variables = parse_file(src)
         stem = Path(cfile).stem
+
+        # Generate Activity Diagrams if requested
+        if "Generate Activity Diagram" in sel_activity_fields:
+            print("Generating activity diagrams...")
+            success = activity_diagram.generate_activity_diagrams(
+                cfile, str(outdir), f"{stem}_activity"
+            )
+            if success:
+                print("✅ Activity diagrams generated successfully!")
 
         # Precompute the Excel path (used for .xlsx and .docx output)
         xlsx_path = outdir / f"{stem}.xlsx"
 
         # Excel export
         if "Excel" in sel_formats:
-            write_excel(str(xlsx_path), rows, sel_fields)
+            write_excel(str(xlsx_path), functions, macros, variables, 
+                       sel_function_fields, sel_macro_fields, sel_variable_fields)
             open_file(str(xlsx_path))
 
         # Word export
         if "Word" in sel_formats:
             # write_docx takes the Excel path to derive the .docx alongside it
-            write_docx(str(xlsx_path), stem, rows, sel_fields)
+            write_docx(str(xlsx_path), stem, functions, macros, variables,
+                      sel_function_fields, sel_macro_fields, sel_variable_fields)
             open_file(str(xlsx_path.with_suffix('.docx')))
 
         # Markdown export
         if "MD" in sel_formats:
             md_path = outdir / f"{stem}.md"
-            write_markdown(str(md_path), rows, sel_fields)
+            write_markdown(str(md_path), functions, macros, variables,
+                          sel_function_fields, sel_macro_fields, sel_variable_fields)
             open_file(str(md_path))
 
         # Close the GUI
         root.destroy()
 
-    ttk.Button(frm, text="Run", command=on_run).grid(row=11, column=0, pady=15)
+    ttk.Button(settings_frame, text="Run", command=on_run).grid(row=2, column=0, pady=15)
     root.mainloop()
 
 def main():
-    ap = argparse.ArgumentParser(description="Extract and document Runnables")
+    ap = argparse.ArgumentParser(description="Extract and document Runnables, Macros, and Variables")
     ap.add_argument("file", nargs="?", default=None, help="C source file path")
     ap.add_argument("--nogui", action="store_true", help="skip GUI even if no file")
     args = ap.parse_args()
@@ -514,18 +1044,28 @@ def main():
         sys.exit(1)
 
     try:
-        rows = parse_file(src)
+        functions, macros, variables = parse_file(src)
     except Exception as e:
         print(f"❌ Error parsing {args.file}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(json.dumps(rows, indent=2))
+    # Output JSON for all parsed data
+    output = {
+        "functions": functions,
+        "macros": macros,
+        "variables": variables
+    }
+    print(json.dumps(output, indent=2))
 
     swcName = Path(args.file).stem
-    write_docx(args.file, swcName, rows, [  # default to all fields
+    write_docx(args.file, swcName, functions, macros, variables, [
         "Name","Description","Syntax","Triggers","In-Parameters","Out-Parameters",
         "Return Value","Function Type","Inputs","Outputs",
         "Invoked Operations","Used Data Types","Sync/Async","Reentrancy"
+    ], [
+        "Name", "Value"
+    ], [
+        "Name", "Data Type", "Initial Value", "Scope"
     ])
 
 if __name__ == "__main__":

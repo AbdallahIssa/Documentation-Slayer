@@ -1,8 +1,3 @@
-/*  Documentation-Slayer VS-Code side
- *  – runs parser.py in GUI mode whenever the command is invoked
- *  – launches the bundled parser GUI whenever the command is invoked
- */
-
 import * as vscode from 'vscode';
 import { execFile } from 'child_process';
 
@@ -23,7 +18,7 @@ function runExtractor(context: vscode.ExtensionContext) {
   }
 
   // Pick the right executable name per platform
-  const exeName = process.platform === 'win32' ? 'parser.exe' : 'parser';
+  const exeName = process.platform === 'win32' ? 'Doc-Slayer.exe' : 'Doc-Slayer';
 
   // Build a URI for the exe inside the extension
   const exeUri = vscode.Uri.joinPath(context.extensionUri, exeName);
@@ -34,7 +29,7 @@ function runExtractor(context: vscode.ExtensionContext) {
     if (err) {
       if ((err as any).code === 'ENOENT') {
         vscode.window.showErrorMessage(
-          `Cannot find bundled parser at:\n${exePath}\n\n` +
+          `Cannot find bundled Doc-Slayer.exe at:\n${exePath}\n\n` +
           `Make sure you’ve copied ${exeName} into the extension’s root folder.`
         );
       } else {
