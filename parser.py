@@ -507,20 +507,114 @@ def write_docx(source_path: str, swcName: str, functions: list[dict], macros: li
     docx_path = excel_path.with_suffix('.docx')
     doc.save(str(docx_path))
 
-def classify_params(body: str, params: list[str]) -> dict:
-    """Heuristic IN/OUT/INOUT detection."""
+def classify_params(body: str, params: list[str], param_types: list[str]) -> dict:
+    """
+    Precise IN/OUT/INOUT detection for parameters.
+    Analyzes pointer usage patterns within the function body.
+    """
     result = {}
-    for p in params:
+
+    for p, ptype in zip(params, param_types):
         esc = re.escape(p)
-        ptr_write   = re.search(rf"[\*\(]\s*{esc}\s*\)?\s*(?:[+\-*/]?=|[+\-]{{2}})", body)
+
+        # Check if parameter has const qualifier
+        if re.search(r'\bconst\b', ptype):
+            result[p] = "IN"
+            continue
+
+        is_written = False
+        is_read = False
+
+        # Pattern 1: Pointer dereference writes - *param = value
+        ptr_deref_write = re.search(rf"\*\s*{esc}\s*=", body)
+        if ptr_deref_write:
+            is_written = True
+
+        # Pattern 2: Array access writes - param[i] = value
+        array_write = re.search(rf"\b{esc}\s*\[[^\]]+\]\s*=", body)
+        if array_write:
+            is_written = True
+
+        # Pattern 3: Structure member writes - param->field = value
         arrow_write = re.search(rf"\b{esc}\s*->\s*\w+\s*=", body)
-        inc_dec     = re.search(rf"(?:\+\+|--)\s*{esc}\b|\b{esc}\s*(?:\+\+|--)", body)
-        write_api   = re.search(rf"\b\w*(?:Write|Set)\w*\s*\([^;]*\b{esc}\b", body)
+        if arrow_write:
+            is_written = True
 
-        is_written = bool(ptr_write or arrow_write or inc_dec or write_api)
-        is_read    = bool(re.search(rf"\b{esc}\b", body))
+        # Pattern 4: Increment/decrement on pointer - ptr++, ++ptr, ptr--, --ptr
+        inc_dec = re.search(rf"(?:\+\+|--)\s*{esc}\b|\b{esc}\s*(?:\+\+|--)", body)
+        if inc_dec:
+            is_written = True
 
-        result[p] = "INOUT" if (is_written and is_read) else ("OUT" if is_written else "IN")
+        # Pattern 5: Increment/decrement on dereferenced pointer - (*ptr)++, ++(*ptr)
+        deref_inc_dec = re.search(rf"(?:\+\+|--)\s*\(\s*\*\s*{esc}\s*\)|\(\s*\*\s*{esc}\s*\)\s*(?:\+\+|--)", body)
+        if deref_inc_dec:
+            is_written = True
+
+        # Pattern 6: Assignment to dereferenced pointer in parentheses - (*param) = value
+        paren_ptr_write = re.search(rf"\(\s*\*\s*{esc}\s*\)\s*=", body)
+        if paren_ptr_write:
+            is_written = True
+
+        # Pattern 7: Function calls with param as destination (first parameter typically)
+        # memcpy(dest, src, len) - dest is OUT
+        memcpy_out = re.search(rf"\b(?:memcpy|strcpy|sprintf|snprintf)\s*\(\s*{esc}\s*,", body)
+        if memcpy_out:
+            is_written = True
+
+        # Pattern 8: Write APIs - functions with Write/Set in name
+        write_api = re.search(rf"\b\w*(?:Write|Set)\w*\s*\([^;]*\b{esc}\b", body)
+        if write_api:
+            is_written = True
+
+        # === READ PATTERNS ===
+
+        # Pattern 9: Pointer dereference reads - value = *param
+        ptr_deref_read = re.search(rf"=\s*\*\s*{esc}\b", body)
+        if ptr_deref_read:
+            is_read = True
+
+        # Pattern 10: Array access reads - value = param[i]
+        array_read = re.search(rf"=\s*{esc}\s*\[[^\]]+\]", body)
+        if array_read:
+            is_read = True
+
+        # Pattern 11: Structure member reads - value = param->field
+        arrow_read = re.search(rf"=\s*{esc}\s*->\s*\w+", body)
+        if arrow_read:
+            is_read = True
+
+        # Pattern 12: Function calls with param as source (second parameter typically)
+        # memcpy(dest, src, len) - src is IN
+        memcpy_in = re.search(rf"\b(?:memcpy|strcpy|strcmp|strncmp)\s*\([^,]+,\s*{esc}\s*[,\)]", body)
+        if memcpy_in:
+            is_read = True
+
+        # Pattern 13: Read APIs - functions with Read/Get in name
+        read_api = re.search(rf"\b\w*(?:Read|Get)\w*\s*\([^;]*\b{esc}\b", body)
+        if read_api:
+            is_read = True
+
+        # Pattern 14: Parameter used in comparison or condition
+        condition_use = re.search(rf"(?:if|while|for|switch)\s*\([^)]*\b{esc}\b", body)
+        if condition_use:
+            is_read = True
+
+        # Pattern 15: Parameter used in expressions (right side of operations)
+        expr_use = re.search(rf"[+\-*/%&|^<>]\s*{esc}\b|\b{esc}\s*[+\-*/%&|^<>]", body)
+        if expr_use:
+            is_read = True
+
+        # Classify based on usage
+        if is_written and is_read:
+            result[p] = "INOUT"
+        elif is_written:
+            result[p] = "OUT"
+        elif is_read:
+            result[p] = "IN"
+        else:
+            # Parameter not used in body, assume IN
+            result[p] = "IN"
+
     return result
 
 def get_trigger_comment(comments: list, pos: int) -> str:
@@ -1013,18 +1107,27 @@ def parse_file(src: str) -> tuple[list, list, list]:
         else:
             trigger = ""
 
-        # params names
+        # params names and types
         parts = [p.strip() for p in re.split(r",(?![^(]*\))", raw_params) if p.strip()]
         names = []
         for p in parts:
-            mm = re.search(r"\b([A-Za-z_]\w*)\s*$", p)
+            # Match parameter name, handling arrays: uint8 arr[] or uint8 arr[10]
+            # Also handle pointers: uint8* ptr or uint8 *ptr
+            mm = re.search(r"\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*$", p)
             names.append(mm.group(1) if mm else p)
 
-        # IN/OUT
-        dirs = classify_params(body, names)
+        # IN/OUT classification with enhanced pointer analysis
+        dirs = classify_params(body, names, parts)
+
+        # AUTOSAR macro overrides
         for orig, nm in zip(parts, names):
-            if orig.startswith(("P2CONST(","P2VAR(")):
+            # P2CONST = const pointer, should be IN
+            if orig.startswith("P2CONST("):
+                dirs[nm] = "IN"
+            # P2VAR = variable pointer, can be written to, should be OUT
+            elif orig.startswith("P2VAR("):
                 dirs[nm] = "OUT"
+
         inP  = [p for p in names if dirs[p] in ("IN","INOUT")]
         outP = [p for p in names if dirs[p] in ("OUT","INOUT")]
 
