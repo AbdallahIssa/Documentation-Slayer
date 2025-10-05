@@ -1,0 +1,12 @@
+{
+  "inputs": [
+    "src/module1.c",
+    "src/module2.c",
+    "src/utils/"
+  ],
+  "output": "docs/output",
+  "format": "excel",
+  "parse": ["functions", "macros", "variables"],
+  "file_pattern": "*.c",
+  "recursive": true
+}

@@ -1491,46 +1491,282 @@ def show_gui():
     ttk.Button(settings_frame, text="Run", command=on_run).grid(row=2, column=0, pady=15)
     root.mainloop()
 
-def main():
-    ap = argparse.ArgumentParser(description="Extract and document Runnables, Macros, and Variables")
-    ap.add_argument("file", nargs="?", default=None, help="C source file path")
-    ap.add_argument("--nogui", action="store_true", help="skip GUI even if no file")
-    args = ap.parse_args()
+def log_verbose(message, verbose=False):
+    """Print verbose logging messages"""
+    if verbose:
+        print(f"[INFO] {message}", file=sys.stderr)
 
-    if not args.file and not args.nogui:
-        show_gui()
-        sys.exit(0)
+
+def process_file_cli(file_path, parse_types, output_path, output_formats, verbose=False):
+    """Process a single file in CLI mode"""
+    log_verbose(f"Processing file: {file_path}", verbose)
 
     try:
-        src = open(args.file, encoding="utf-8").read()
+        with open(file_path, encoding="utf-8") as f:
+            src = f.read()
     except Exception as e:
-        print(f"❌ Error reading {args.file}: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"❌ Error reading {file_path}: {e}", file=sys.stderr)
+        return False
 
     try:
         functions, macros, variables = parse_file(src)
     except Exception as e:
-        print(f"❌ Error parsing {args.file}: {e}", file=sys.stderr)
+        print(f"❌ Error parsing {file_path}: {e}", file=sys.stderr)
+        return False
+
+    # Filter based on parse_types
+    if 'all' not in parse_types:
+        if 'functions' not in parse_types:
+            functions = []
+        if 'macros' not in parse_types:
+            macros = []
+        if 'variables' not in parse_types:
+            variables = []
+
+    log_verbose(f"Parsed {len(functions)} functions, {len(macros)} macros, {len(variables)} variables", verbose)
+
+    # Common field selections
+    function_fields = ["Line Number","Name","Description","Syntax","Triggers","In-Parameters","Out-Parameters",
+                      "Return Value","Function Type","Inputs","Outputs",
+                      "Invoked Operations","Used Data Types","Sync/Async","Reentrancy"]
+    macro_fields = ["Line Number", "Name", "Value"]
+    variable_fields = ["Line Number", "Name", "Data Type", "Initial Value", "Scope"]
+
+    # Export to each requested format
+    all_success = True
+    for output_format in output_formats:
+        # Determine output path for this format
+        if output_path:
+            # If output_path is a directory, create file inside it
+            output_path_obj = Path(output_path)
+            if output_path_obj.is_dir() or not output_path_obj.suffix:
+                output_path_obj.mkdir(parents=True, exist_ok=True)
+                file_stem = Path(file_path).stem
+                if output_format == 'excel':
+                    format_output_path = str(output_path_obj / f"{file_stem}_documentation.xlsx")
+                elif output_format == 'markdown':
+                    format_output_path = str(output_path_obj / f"{file_stem}_documentation.md")
+                elif output_format == 'word':
+                    format_output_path = str(output_path_obj / f"{file_stem}_documentation.docx")
+                else:
+                    format_output_path = str(output_path_obj / f"{file_stem}_documentation.json")
+            else:
+                # Use the provided path as-is (for single format)
+                format_output_path = output_path
+        else:
+            # No output path specified, save next to input file
+            file_stem = Path(file_path).stem
+            file_dir = Path(file_path).parent
+            if output_format == 'excel':
+                format_output_path = str(file_dir / f"{file_stem}_documentation.xlsx")
+            elif output_format == 'markdown':
+                format_output_path = str(file_dir / f"{file_stem}_documentation.md")
+            elif output_format == 'word':
+                format_output_path = str(file_dir / f"{file_stem}_documentation.docx")
+            else:
+                format_output_path = str(file_dir / f"{file_stem}_documentation.json")
+
+        # Export based on format
+        try:
+            if output_format == 'excel':
+                log_verbose(f"Exporting to Excel: {format_output_path}", verbose)
+                write_excel(format_output_path, functions, macros, variables,
+                    function_fields, macro_fields, variable_fields)
+
+            elif output_format == 'markdown':
+                log_verbose(f"Exporting to Markdown: {format_output_path}", verbose)
+                write_markdown(format_output_path, functions, macros, variables,
+                    function_fields, macro_fields, variable_fields)
+
+            elif output_format == 'word':
+                log_verbose(f"Exporting to Word: {format_output_path}", verbose)
+                swcName = Path(file_path).stem
+                write_docx(format_output_path, swcName, functions, macros, variables,
+                    function_fields, macro_fields, variable_fields)
+
+            elif output_format == 'json':
+                log_verbose(f"Exporting to JSON: {format_output_path}", verbose)
+                output = {
+                    "functions": functions,
+                    "macros": macros,
+                    "variables": variables
+                }
+                with open(format_output_path, 'w', encoding='utf-8') as f:
+                    json.dump(output, f, indent=2)
+
+            log_verbose(f"✓ Successfully exported to {format_output_path}", verbose)
+
+        except Exception as e:
+            print(f"❌ Error exporting to {output_format}: {e}", file=sys.stderr)
+            all_success = False
+
+    return all_success
+
+
+def process_directory_cli(dir_path, parse_types, output_path, output_formats, file_pattern, recursive, verbose=False):
+    """Process all matching files in a directory"""
+    log_verbose(f"Scanning directory: {dir_path} (recursive={recursive})", verbose)
+
+    path = Path(dir_path)
+    if recursive:
+        pattern_files = list(path.rglob(file_pattern))
+    else:
+        pattern_files = list(path.glob(file_pattern))
+
+    log_verbose(f"Found {len(pattern_files)} files matching pattern '{file_pattern}'", verbose)
+
+    success_count = 0
+    for file_path in pattern_files:
+        # Generate unique output path for each file
+        if output_path:
+            # Create output in specified directory with same structure
+            rel_path = file_path.relative_to(path)
+            out_dir = Path(output_path)
+            out_file = out_dir / rel_path.parent
+        else:
+            out_file = file_path.parent
+
+        # Ensure output directory exists
+        out_file.mkdir(parents=True, exist_ok=True)
+
+        if process_file_cli(str(file_path), parse_types, str(out_file), output_formats, verbose):
+            success_count += 1
+
+    log_verbose(f"Processed {success_count}/{len(pattern_files)} files successfully", verbose)
+    return success_count == len(pattern_files)
+
+
+def process_batch_config(config_file, verbose=False):
+    """Process multiple files based on JSON config"""
+    log_verbose(f"Loading batch config: {config_file}", verbose)
+
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    except Exception as e:
+        print(f"❌ Error reading config file {config_file}: {e}", file=sys.stderr)
+        return False
+
+    inputs = config.get('inputs', [])
+    output = config.get('output', None)
+    output_format = config.get('format', 'excel')
+    parse_types = config.get('parse', ['all'])
+    file_pattern = config.get('file_pattern', '*.c')
+    recursive = config.get('recursive', False)
+
+    # Parse formats (support both string and list)
+    if isinstance(output_format, str):
+        output_formats = [f.strip().lower() for f in output_format.split(',')]
+    else:
+        output_formats = output_format
+
+    log_verbose(f"Batch config: {len(inputs)} inputs, format={','.join(output_formats)}", verbose)
+
+    all_success = True
+    for input_path in inputs:
+        input_path_obj = Path(input_path)
+
+        if input_path_obj.is_file():
+            if not process_file_cli(input_path, parse_types, output, output_formats, verbose):
+                all_success = False
+        elif input_path_obj.is_dir():
+            if not process_directory_cli(input_path, parse_types, output, output_formats, file_pattern, recursive, verbose):
+                all_success = False
+        else:
+            print(f"❌ Input path does not exist: {input_path}", file=sys.stderr)
+            all_success = False
+
+    return all_success
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="Documentation Slayer - Extract and document C functions, macros, and variables",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Launch GUI (default)
+  python parser.py
+
+  # Parse single file to Excel
+  python parser.py --input file.c --format excel
+
+  # Parse single file to multiple formats (Excel and Word)
+  python parser.py --input file.c --format excel,word --output docs/
+
+  # Parse directory recursively to Markdown
+  python parser.py --input src/ --recursive --format markdown --parse functions,macros
+
+  # Use config file for batch processing
+  python parser.py --config batch.json --verbose
+
+  # CLI mode with multiple formats and verbose output
+  python parser.py --input file.c --no-gui --format excel,word,markdown --output docs/ --verbose
+        """
+    )
+
+    # Legacy support for positional file argument
+    ap.add_argument("file", nargs="?", default=None, help="C source file path (legacy, use --input instead)")
+
+    # Main options
+    ap.add_argument("--input", "-i", help="Input file or directory path")
+    ap.add_argument("--output", "-o", help="Output file or directory path")
+    ap.add_argument("--format", "-f", default='excel',
+                    help="Export format(s): excel, word, markdown (comma-separated, default: excel)")
+    ap.add_argument("--parse", "-p", default='all',
+                    help="What to parse: functions, macros, variables, all (comma-separated, default: all)")
+    ap.add_argument("--no-gui", "--nogui", action="store_true",
+                    help="Run without GUI (CLI mode only)")
+    ap.add_argument("--config", "-c", help="JSON config file for batch processing")
+    ap.add_argument("--recursive", "-r", action="store_true",
+                    help="Parse directories recursively")
+    ap.add_argument("--file-pattern", default="*.c",
+                    help="File pattern to match (default: *.c)")
+    ap.add_argument("--verbose", "-v", action="store_true",
+                    help="Enable verbose logging")
+
+    args = ap.parse_args()
+
+    # Parse types
+    parse_types = [t.strip().lower() for t in args.parse.split(',')]
+
+    # Parse formats (comma-separated)
+    output_formats = [f.strip().lower() for f in args.format.split(',')]
+
+    # Config file mode
+    if args.config:
+        success = process_batch_config(args.config, args.verbose)
+        sys.exit(0 if success else 1)
+
+    # Determine input (--input takes precedence over positional file argument)
+    input_path = args.input or args.file
+
+    # If no input and no --no-gui, launch GUI
+    if not input_path and not args.no_gui:
+        show_gui()
+        sys.exit(0)
+
+    # CLI mode requires input
+    if not input_path:
+        print("❌ Error: --input required in CLI mode (or use GUI without --no-gui)", file=sys.stderr)
+        ap.print_help()
         sys.exit(1)
 
-    # Output JSON for all parsed data
-    output = {
-        "functions": functions,
-        "macros": macros,
-        "variables": variables
-    }
-    print(json.dumps(output, indent=2))
+    # Process input
+    input_path_obj = Path(input_path)
 
-    swcName = Path(args.file).stem
-    write_docx(args.file, swcName, functions, macros, variables, [
-        "Line Number","Name","Description","Syntax","Triggers","In-Parameters","Out-Parameters",
-        "Return Value","Function Type","Inputs","Outputs",
-        "Invoked Operations","Used Data Types","Sync/Async","Reentrancy"
-    ], [
-        "Line Number", "Name", "Value"
-    ], [
-        "Line Number", "Name", "Data Type", "Initial Value", "Scope"
-    ])
+    if input_path_obj.is_file():
+        success = process_file_cli(input_path, parse_types, args.output, output_formats, args.verbose)
+        sys.exit(0 if success else 1)
+
+    elif input_path_obj.is_dir():
+        success = process_directory_cli(input_path, parse_types, args.output, output_formats,
+                                       args.file_pattern, args.recursive, args.verbose)
+        sys.exit(0 if success else 1)
+
+    else:
+        print(f"❌ Error: Input path does not exist: {input_path}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
