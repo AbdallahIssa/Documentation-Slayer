@@ -590,37 +590,70 @@ def parse_variables(src: str) -> list[dict]:
     
     # First, identify all function bodies to exclude local variables
     function_bodies = []
-    
+
     # Find all functions (including FUNC macros, static, and global functions)
     func_patterns = [
         re.compile(r'FUNC\s*\([^)]*\)\s*[A-Za-z_]\w*\s*\([^)]*\)\s*\{', re.MULTILINE),
         re.compile(r'(?:static\s+)?(?:inline\s+)?[A-Za-z_]\w*(?:\s*\*+)?\s+[A-Za-z_]\w*\s*\([^)]*\)\s*\{', re.MULTILINE)
     ]
-    
+
     for pattern in func_patterns:
         for match in pattern.finditer(src_clean):
             # Find the complete function body
             start_pos = match.end() - 1  # position of opening '{'
             brace_count = 1
             pos = start_pos + 1
-            
+
             while pos < len(src_clean) and brace_count > 0:
                 if src_clean[pos] == '{':
                     brace_count += 1
                 elif src_clean[pos] == '}':
                     brace_count -= 1
                 pos += 1
-            
+
             if brace_count == 0:
                 function_bodies.append((start_pos, pos))
             else:
                  # If we reached end of file with unclosed braces, don't include this as a function body
                  # This prevents the entire end of file from being marked as "inside function"
                  pass
-    
+
     def is_inside_function(position):
         """Check if a position is inside any function body."""
         for start, end in function_bodies:
+            if start <= position <= end:
+                return True
+        return False
+
+    # Second, identify all struct/union definition blocks to exclude member variables
+    struct_definitions = []
+
+    # Find all struct/union definitions (including typedef'd ones)
+    # Matches: struct/union Name { ... } or typedef struct/union { ... } Name_t;
+    struct_pattern = re.compile(
+        r'(?:typedef\s+)?(?:struct|union)\s*(?:[A-Za-z_]\w*)?\s*\{',
+        re.MULTILINE
+    )
+
+    for match in struct_pattern.finditer(src_clean):
+        # Find the complete struct/union definition body
+        start_pos = match.end() - 1  # position of opening '{'
+        brace_count = 1
+        pos = start_pos + 1
+
+        while pos < len(src_clean) and brace_count > 0:
+            if src_clean[pos] == '{':
+                brace_count += 1
+            elif src_clean[pos] == '}':
+                brace_count -= 1
+            pos += 1
+
+        if brace_count == 0:
+            struct_definitions.append((start_pos, pos))
+
+    def is_inside_struct_definition(position):
+        """Check if a position is inside any struct/union definition."""
+        for start, end in struct_definitions:
             if start <= position <= end:
                 return True
         return False
@@ -661,12 +694,16 @@ def parse_variables(src: str) -> list[dict]:
         \s*;(?=\s|$)                                       # semicolon
         ''', re.MULTILINE | re.VERBOSE)
     
-    # Keywords to exclude (function keywords, control flow, etc.)
-    exclude_keywords = {
+    # Keywords to exclude as variable names (control flow, etc.)
+    exclude_var_names = {
         'if', 'for', 'while', 'switch', 'do', 'else', 'case', 'return',
-        'goto', 'break', 'continue', 'sizeof', 'typedef', 'struct', 'union',
-        'enum', 'extern', 'register', 'auto', 'volatile', 'const', 'inline',
-        'unsigned', 'signed', 'long', 'short', 'void', 'char', 'int', 'float', 'double'
+        'goto', 'break', 'continue', 'sizeof'
+    }
+
+    # Keywords to exclude as data types (storage classes, type qualifiers that shouldn't be standalone)
+    exclude_data_types = {
+        'typedef', 'struct', 'union', 'enum', 'extern', 'register',
+        'auto', 'volatile', 'const', 'inline'
     }
     
     # Find extern variable declarations
@@ -674,11 +711,15 @@ def parse_variables(src: str) -> list[dict]:
         if is_inside_function(match.start()):
             continue
 
+        # Skip if inside struct/union definition
+        if is_inside_struct_definition(match.start()):
+            continue
+
         extern_kw = match.group(1)
         data_type = match.group(2).strip()
         var_name = match.group(3)
 
-        if extern_kw and var_name not in exclude_keywords and data_type.lower() not in exclude_keywords:
+        if extern_kw and var_name not in exclude_var_names and data_type.lower() not in exclude_data_types:
             line_number = get_line_number(src_clean, match.start())
             variables.append({
                 "name": var_name,
@@ -693,12 +734,16 @@ def parse_variables(src: str) -> list[dict]:
         if is_inside_function(match.start()):
             continue
 
+        # Skip if inside struct/union definition
+        if is_inside_struct_definition(match.start()):
+            continue
+
         static_kw = match.group(1)
         data_type = match.group(2).strip()
         var_name = match.group(3)
         init_value = match.group(4).strip() if match.group(4) else ""
 
-        if var_name in exclude_keywords or data_type.lower() in exclude_keywords:
+        if var_name in exclude_var_names or data_type.lower() in exclude_data_types:
             continue
 
         # Check if this looks like a function (has parentheses after the name)
@@ -729,13 +774,17 @@ def parse_variables(src: str) -> list[dict]:
         if is_inside_function(match.start()):
             continue
 
+        # Skip if inside struct/union definition
+        if is_inside_struct_definition(match.start()):
+            continue
+
         static_kw = match.group(1)
         data_type = match.group(2).strip()
         var_name = match.group(3)
         array_size = match.group(4).strip() if match.group(4) else ""
         init_value = match.group(5).strip() if match.group(5) else ""
 
-        if var_name in exclude_keywords or data_type.lower() in exclude_keywords:
+        if var_name in exclude_var_names or data_type.lower() in exclude_data_types:
             continue
 
         scope = "Static Global" if static_kw else "Global"
