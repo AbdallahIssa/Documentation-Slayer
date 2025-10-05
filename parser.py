@@ -782,11 +782,11 @@ def parse_macros(src: str) -> list[dict]:
 def parse_variables(src: str) -> list[dict]:
     """Extract global and static global variables from C source code."""
     variables = []
-    
-    # Remove preprocessor directives and comments to avoid false matches
+
+    # Remove preprocessor directives and comments to avoid false matches in body detection
     src_clean = re.sub(r'^\s*#.*$', '', src, flags=re.MULTILINE)
     src_clean = re.sub(r'/\*[\s\S]*?\*/|//.*', '', src_clean)
-    
+
     # First, identify all function bodies to exclude local variables
     function_bodies = []
 
@@ -856,9 +856,27 @@ def parse_variables(src: str) -> list[dict]:
             if start <= position <= end:
                 return True
         return False
-    
+
+    def find_in_original_src(pattern, var_name, data_type):
+        """
+        Find variable declaration in original src to get accurate line number.
+        Search for the variable name and data type combination.
+        """
+        # Create a simpler pattern to find this specific variable in original source
+        search_pattern = rf'\b{re.escape(data_type)}\s+{re.escape(var_name)}\b'
+        for match in re.finditer(search_pattern, src):
+            # Return the position in original source
+            return match.start()
+        # Fallback: just search for variable name
+        search_pattern = rf'\b{re.escape(var_name)}\s*[=;\[]'
+        for match in re.finditer(search_pattern, src):
+            return match.start()
+        return None
+
     # Debug: Print function bodies for troubleshooting
-    # print(f"Function bodies detected: {function_bodies}")
+    #print(f"Function bodies detected: {len(function_bodies)} functions")
+    #for start, end in function_bodies:
+    #    print(f"  Function body: chars {start}-{end}")
 
     # Pattern for extern variable declarations
     extern_var_pattern = re.compile(r'''
@@ -919,17 +937,25 @@ def parse_variables(src: str) -> list[dict]:
         var_name = match.group(3)
 
         if extern_kw and var_name not in exclude_var_names and data_type.lower() not in exclude_data_types:
-            line_number = get_line_number(src_clean, match.start())
-            variables.append({
-                "name": var_name,
-                "dataType": data_type,
-                "initialValue": "",
-                "scope": "Extern",
-                "lineNumber": line_number
-            })
-    
+            # Find position in original source for accurate line number
+            src_pos = find_in_original_src(match, var_name, data_type)
+            if src_pos is not None:
+                line_number = get_line_number(src, src_pos)
+                variables.append({
+                    "name": var_name,
+                    "dataType": data_type,
+                    "initialValue": "",
+                    "scope": "Extern",
+                    "lineNumber": line_number
+                })
+
     # Find static/regular variable declarations
     for match in static_var_pattern.finditer(src_clean):
+        static_kw = match.group(1)
+        data_type = match.group(2).strip()
+        var_name = match.group(3)
+        init_value = match.group(4).strip() if match.group(4) else ""
+
         if is_inside_function(match.start()):
             continue
 
@@ -937,20 +963,12 @@ def parse_variables(src: str) -> list[dict]:
         if is_inside_struct_definition(match.start()):
             continue
 
-        static_kw = match.group(1)
-        data_type = match.group(2).strip()
-        var_name = match.group(3)
-        init_value = match.group(4).strip() if match.group(4) else ""
-
         if var_name in exclude_var_names or data_type.lower() in exclude_data_types:
             continue
 
-        # Check if this looks like a function (has parentheses after the name)
-        next_pos = match.end()
-        if next_pos < len(src_clean):
-            remaining = src_clean[next_pos:next_pos+50]
-            if '(' in remaining.split(';')[0]:
-                continue
+        # Check if this looks like a function (has parentheses immediately after the name, before semicolon)
+        # The match already ends at semicolon, so we don't need this check anymore
+        # (it was causing false positives with macros on subsequent lines)
 
         # Skip if it looks like a function pointer or typedef
         full_match = match.group(0)
@@ -958,15 +976,18 @@ def parse_variables(src: str) -> list[dict]:
             continue
 
         scope = "Static Global" if static_kw else "Global"
-        line_number = get_line_number(src_clean, match.start())
 
-        variables.append({
-            "name": var_name,
-            "dataType": data_type,
-            "initialValue": init_value,
-            "scope": scope,
-            "lineNumber": line_number
-        })
+        # Find position in original source for accurate line number
+        src_pos = find_in_original_src(match, var_name, data_type)
+        if src_pos is not None:
+            line_number = get_line_number(src, src_pos)
+            variables.append({
+                "name": var_name,
+                "dataType": data_type,
+                "initialValue": init_value,
+                "scope": scope,
+                "lineNumber": line_number
+            })
 
     # Find array declarations
     for match in static_array_pattern.finditer(src_clean):
@@ -987,17 +1008,20 @@ def parse_variables(src: str) -> list[dict]:
             continue
 
         scope = "Static Global" if static_kw else "Global"
-        line_number = get_line_number(src_clean, match.start())
 
-        full_type = f"{data_type}[{array_size}]"
+        # Find position in original source for accurate line number
+        src_pos = find_in_original_src(match, var_name, data_type)
+        if src_pos is not None:
+            line_number = get_line_number(src, src_pos)
+            full_type = f"{data_type}[{array_size}]"
 
-        variables.append({
-            "name": var_name,
-            "dataType": full_type,
-            "initialValue": init_value,
-            "scope": scope,
-            "lineNumber": line_number
-        })
+            variables.append({
+                "name": var_name,
+                "dataType": full_type,
+                "initialValue": init_value,
+                "scope": scope,
+                "lineNumber": line_number
+            })
 
     # Post-processing: Clean up any remaining preprocessor keywords from datatypes
     preprocessor_keywords = {
