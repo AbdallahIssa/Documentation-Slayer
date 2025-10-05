@@ -531,6 +531,107 @@ def get_trigger_comment(comments: list, pos: int) -> str:
             best_end, best_txt = end, txt
     return best_txt
 
+def parse_doxygen_comment(comment: str) -> str:
+    """
+    Parse Doxygen comment and extract description.
+    Handles @brief, @details, and combines them.
+    """
+    if not comment:
+        return ""
+
+    # Remove comment delimiters and clean up
+    # Handle /** */ style
+    text = re.sub(r'/\*\*+!?', '', comment)
+    text = re.sub(r'\*/', '', text)
+    # Remove leading * from each line
+    text = re.sub(r'^\s*\*\s?', '', text, flags=re.MULTILINE)
+    # Handle /// style
+    text = re.sub(r'^\s*///?!?\s?', '', text, flags=re.MULTILINE)
+
+    # Extract @brief or \brief - stop at next tag (on a newline) or end of text
+    brief_match = re.search(r'[@\\]brief\s+(.+?)(?=\s*\n\s*[@\\](?:param|return|details|note|warning|see)\b|\Z)', text, re.DOTALL | re.IGNORECASE)
+    brief = brief_match.group(1).strip() if brief_match else ""
+
+    # Extract @details or \details - stop at next tag (on a newline) or end of text
+    details_match = re.search(r'[@\\]details\s+(.+?)(?=\s*\n\s*[@\\](?:param|return|brief|note|warning|see)\b|\Z)', text, re.DOTALL | re.IGNORECASE)
+    details = details_match.group(1).strip() if details_match else ""
+
+    # If no tags found, try to extract the first paragraph as description
+    if not brief and not details:
+        # Remove all Doxygen tags and get the first non-empty text before any tag
+        no_tags = re.sub(r'[@\\](?:param|return|brief|details|note|warning|see)\b.*', '', text, flags=re.DOTALL)
+        lines = [line.strip() for line in no_tags.split('\n') if line.strip()]
+        if lines:
+            brief = ' '.join(lines)
+
+    # Combine brief and details
+    if brief and details:
+        # Clean up multiline formatting
+        brief = ' '.join(brief.split())
+        details = ' '.join(details.split())
+        return f"{brief}. {details}"
+    elif brief:
+        return ' '.join(brief.split())
+    elif details:
+        return ' '.join(details.split())
+
+    return ""
+
+def get_doxygen_comment(src: str, comments: list, pos: int) -> str:
+    """
+    Find the closest Doxygen comment before the function position.
+    Handles both /** */ and /// style comments.
+    """
+    # Look for /// style comments first (they're usually directly above the function)
+    snippet_before = src[:pos]
+    lines = snippet_before.split('\n')
+
+    # Go backwards from the function position
+    doxygen_lines = []
+    found_function_line = False
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i].strip()
+
+        if not found_function_line and line:
+            # This is the function declaration line, skip it
+            found_function_line = True
+            continue
+
+        if line.startswith('///'):
+            doxygen_lines.insert(0, line)
+        elif line and not line.startswith('//') and not line.startswith('*'):
+            # Stop when we hit non-comment, non-empty line
+            break
+
+    if doxygen_lines:
+        combined = '\n'.join(doxygen_lines)
+        return parse_doxygen_comment(combined)
+
+    # Look for block comments (/** */ or /*!)
+    best_end, best_txt = -1, ""
+    for end, txt in comments:
+        # Check if it's a Doxygen comment (starts with /** or /*!)
+        if end <= pos and (txt.strip().startswith('/**') or txt.strip().startswith('/*!')):
+            # Exclude AUTOSAR-generated comments
+            if "DO NOT CHANGE THIS COMMENT!" in txt:
+                continue
+
+            # Check if there's code (not just whitespace/comments) between comment and function
+            between = src[end:pos]
+            # Remove whitespace and other comments
+            between_clean = re.sub(r'\s+', '', between)
+            between_clean = re.sub(r'//.*', '', between_clean)
+            between_clean = re.sub(r'/\*.*?\*/', '', between_clean)
+
+            # Only use this comment if there's no significant code between it and the function
+            if not between_clean and end > best_end:
+                best_end, best_txt = end, txt
+
+    if best_txt:
+        return parse_doxygen_comment(best_txt)
+
+    return ""
+
 def parse_macros(src: str) -> list[dict]:
     """Extract #define macros from C source code."""
     # Regex for a macro header: #define NAME [optional(param,list)] body-fragment
@@ -956,7 +1057,9 @@ def parse_file(src: str) -> tuple[list, list, list]:
         # placeholders for GUI fields
         sync_async = ""
         reentrancy = ""
-        description = ""
+
+        # Extract Doxygen description from comments above function
+        description = get_doxygen_comment(src, comments, m.start())
 
         # Calculate line number
         line_number = get_line_number(src, m.start())
