@@ -14,12 +14,92 @@ from tkinter import ttk, filedialog, messagebox
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 import subprocess
+import threading
+
+# Try to import tqdm for CLI progress bars (optional)
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    tqdm = None
 
 
 """
 I'm using This command to get the executable for the parser script:
 pyinstaller --onefile --windowed --name "Doc-Slayer" --icon "vehiclevo_logo_Basic.ico" --add-data "vehiclevo_logo_Basic.ico;." --add-data "CodeSmasher.exe;." parser.py
 """
+
+# Global cancellation flag
+class CancellationToken:
+    """Thread-safe cancellation token for long-running operations"""
+    def __init__(self):
+        self.cancelled = False
+        self._lock = threading.Lock()
+
+    def cancel(self):
+        with self._lock:
+            self.cancelled = True
+
+    def is_cancelled(self):
+        with self._lock:
+            return self.cancelled
+
+    def reset(self):
+        with self._lock:
+            self.cancelled = False
+
+
+class ProgressDialog:
+    """Progress dialog for GUI with cancellation support"""
+    def __init__(self, parent, title="Processing..."):
+        self.cancelled = False
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(title)
+        self.dialog.geometry("400x150")
+        self.dialog.resizable(False, False)
+        self.dialog.grab_set()
+
+        # Center the window
+        self.dialog.update_idletasks()
+        w = self.dialog.winfo_width()
+        h = self.dialog.winfo_height()
+        sw = self.dialog.winfo_screenwidth()
+        sh = self.dialog.winfo_screenheight()
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        self.dialog.geometry(f"{w}x{h}+{x}+{y}")
+
+        self.label = ttk.Label(self.dialog, text="Processing file...")
+        self.label.pack(pady=20)
+
+        self.progress = ttk.Progressbar(self.dialog, mode='indeterminate', length=350)
+        self.progress.pack(pady=10)
+        self.progress.start(10)
+
+        self.cancel_btn = ttk.Button(self.dialog, text="Cancel", command=self.cancel)
+        self.cancel_btn.pack(pady=10)
+
+        self.dialog.protocol("WM_DELETE_WINDOW", self.cancel)
+
+    def update_text(self, text):
+        """Update progress text"""
+        self.label.config(text=text)
+        self.dialog.update()
+
+    def cancel(self):
+        """Mark operation as cancelled"""
+        self.cancelled = True
+        self.close()
+
+    def close(self):
+        """Close the dialog"""
+        try:
+            self.progress.stop()
+            self.dialog.destroy()
+        except:
+            pass
+
 
 class PasswordManager:
     """Manages password authentication with session persistence"""
@@ -1048,7 +1128,7 @@ def get_line_number(src: str, pos: int) -> int:
     """Convert string position to line number (1-indexed)."""
     return src[:pos].count('\n') + 1
 
-def parse_file(src: str) -> tuple[list, list, list]:
+def parse_file(src: str, cancel_token: CancellationToken = None) -> tuple[list, list, list]:
     """Parse file and return (functions, macros, variables)."""
     functions = []
     reserved = {"if","for","while","switch","do","else","case","sizeof","abs","return", "endif"}
@@ -1056,6 +1136,10 @@ def parse_file(src: str) -> tuple[list, list, list]:
         "VStdLib_MemCpy","VStdLib_MemSet","VStdLib_MemCmp",
         "memcmp","memcpy","memset","sizeof","abs","return"
     }
+
+    # Check for cancellation
+    if cancel_token and cancel_token.is_cancelled():
+        return [], [], []
 
     comments = [(m.end(), m.group(0)) for m in re.finditer(r"/\*[\s\S]*?\*/", src)]
 
@@ -1214,11 +1298,23 @@ def parse_file(src: str) -> tuple[list, list, list]:
         })
 
     for m in runnable_rx.finditer(src):
+        if cancel_token and cancel_token.is_cancelled():
+            return [], [], []
         extract(m, "Runnable")
+
     for m in static_rx.finditer(src):
+        if cancel_token and cancel_token.is_cancelled():
+            return [], [], []
         extract(m, "Static")
+
     for m in global_rx.finditer(src):
+        if cancel_token and cancel_token.is_cancelled():
+            return [], [], []
         extract(m, "Global")
+
+    # Check cancellation before parsing macros and variables
+    if cancel_token and cancel_token.is_cancelled():
+        return [], [], []
 
     # Parse macros and variables
     macros = parse_macros(src)
@@ -1407,7 +1503,7 @@ def show_gui():
                 cmd = [str(exe_path)]
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode == 0:
-                    messagebox.showinfo("Success", "Activity diagrams generated successfully!")
+                    messagebox.showinfo("Success", "Activity diagrams got Slayed (generated) successfully!")
                 else:
                     messagebox.showerror("Error", f"Failed to generate activity diagrams:\n{result.stderr}")
             else:
@@ -1457,36 +1553,98 @@ def show_gui():
         if not cfile:
             return
 
-        # Parse the file
-        src = open(cfile, encoding="utf-8").read()
-        functions, macros, variables = parse_file(src)
-        stem = Path(cfile).stem
+        # Create progress dialog and cancellation token
+        progress = ProgressDialog(root, "Processing C File")
+        cancel_token = CancellationToken()
+        result = {"success": False, "error": None, "functions": [], "macros": [], "variables": [], "stem": ""}
 
-        # Precompute the Excel path (used for .xlsx and .docx output)
-        xlsx_path = outdir / f"{stem}.xlsx"
+        def process_in_thread():
+            try:
+                # Read file
+                progress.update_text("Reading file...")
+                src = open(cfile, encoding="utf-8").read()
 
-        # Excel export
-        if "Excel" in sel_formats:
-            write_excel(str(xlsx_path), functions, macros, variables, 
-                       sel_function_fields, sel_macro_fields, sel_variable_fields)
-            open_file(str(xlsx_path))
+                # Parse the file
+                progress.update_text(f"Parsing file ({len(src):,} bytes)...")
+                functions, macros, variables = parse_file(src, cancel_token)
 
-        # Word export
-        if "Word" in sel_formats:
-            # write_docx takes the Excel path to derive the .docx alongside it
-            write_docx(str(xlsx_path), stem, functions, macros, variables,
-                      sel_function_fields, sel_macro_fields, sel_variable_fields)
-            open_file(str(xlsx_path.with_suffix('.docx')))
+                if cancel_token.is_cancelled() or progress.cancelled:
+                    result["error"] = "cancelled"
+                    return
 
-        # Markdown export
-        if "MD" in sel_formats:
-            md_path = outdir / f"{stem}.md"
-            write_markdown(str(md_path), functions, macros, variables,
-                          sel_function_fields, sel_macro_fields, sel_variable_fields)
-            open_file(str(md_path))
+                result["functions"] = functions
+                result["macros"] = macros
+                result["variables"] = variables
+                result["stem"] = Path(cfile).stem
 
-        # Show success message and keep GUI open for more work
-        messagebox.showinfo("Success", f"Documentation got Slayed(generated) successfully!\n\nFile: {stem}\nFormats: {', '.join(sel_formats)}\n")
+                # Export files
+                xlsx_path = outdir / f"{result['stem']}.xlsx"
+
+                if "Excel" in sel_formats:
+                    if cancel_token.is_cancelled() or progress.cancelled:
+                        result["error"] = "cancelled"
+                        return
+                    progress.update_text("Exporting to Excel...")
+                    write_excel(str(xlsx_path), functions, macros, variables,
+                               sel_function_fields, sel_macro_fields, sel_variable_fields)
+
+                if "Word" in sel_formats:
+                    if cancel_token.is_cancelled() or progress.cancelled:
+                        result["error"] = "cancelled"
+                        return
+                    progress.update_text("Exporting to Word...")
+                    write_docx(str(xlsx_path), result['stem'], functions, macros, variables,
+                              sel_function_fields, sel_macro_fields, sel_variable_fields)
+
+                if "MD" in sel_formats:
+                    if cancel_token.is_cancelled() or progress.cancelled:
+                        result["error"] = "cancelled"
+                        return
+                    progress.update_text("Exporting to Markdown...")
+                    md_path = outdir / f"{result['stem']}.md"
+                    write_markdown(str(md_path), functions, macros, variables,
+                                  sel_function_fields, sel_macro_fields, sel_variable_fields)
+
+                result["success"] = True
+
+            except Exception as e:
+                result["error"] = str(e)
+
+        # Start processing in a separate thread
+        thread = threading.Thread(target=process_in_thread, daemon=True)
+        thread.start()
+
+        # Wait for thread to complete
+        while thread.is_alive():
+            root.update()
+            if progress.cancelled:
+                cancel_token.cancel()
+                break
+            thread.join(timeout=0.1)
+
+        # Close progress dialog
+        progress.close()
+
+        # Handle results
+        if result["error"] == "cancelled":
+            messagebox.showwarning("Cancelled", "Operation was cancelled by user.")
+            return
+        elif result["error"]:
+            messagebox.showerror("Error", f"An error occurred:\n{result['error']}")
+            return
+        elif result["success"]:
+            # Open generated files
+            xlsx_path = outdir / f"{result['stem']}.xlsx"
+            if "Excel" in sel_formats:
+                open_file(str(xlsx_path))
+            if "Word" in sel_formats:
+                open_file(str(xlsx_path.with_suffix('.docx')))
+            if "MD" in sel_formats:
+                md_path = outdir / f"{result['stem']}.md"
+                open_file(str(md_path))
+
+            # Show success message
+            messagebox.showinfo("Success", f"Documentation got Slayed (generated) successfully!\n\nFile: {result['stem']}\nFormats: {', '.join(sel_formats)}\n")
 
     ttk.Button(settings_frame, text="Run", command=on_run).grid(row=2, column=0, pady=15)
     root.mainloop()
@@ -1497,7 +1655,7 @@ def log_verbose(message, verbose=False):
         print(f"[INFO] {message}", file=sys.stderr)
 
 
-def process_file_cli(file_path, parse_types, output_path, output_formats, verbose=False):
+def process_file_cli(file_path, parse_types, output_path, output_formats, verbose=False, cancel_token=None):
     """Process a single file in CLI mode"""
     log_verbose(f"Processing file: {file_path}", verbose)
 
@@ -1508,8 +1666,20 @@ def process_file_cli(file_path, parse_types, output_path, output_formats, verbos
         print(f"❌ Error reading {file_path}: {e}", file=sys.stderr)
         return False
 
+    # Show file size for progress estimation
+    file_size = len(src)
+    if verbose:
+        print(f"[INFO] File size: {file_size:,} bytes ({file_size / 1024:.1f} KB)", file=sys.stderr)
+
     try:
-        functions, macros, variables = parse_file(src)
+        if verbose and TQDM_AVAILABLE:
+            print("[INFO] Parsing file...", file=sys.stderr)
+        functions, macros, variables = parse_file(src, cancel_token)
+
+        # Check if cancelled
+        if cancel_token and cancel_token.is_cancelled():
+            print("⚠️  Operation cancelled by user", file=sys.stderr)
+            return False
     except Exception as e:
         print(f"❌ Error parsing {file_path}: {e}", file=sys.stderr)
         return False
@@ -1534,7 +1704,11 @@ def process_file_cli(file_path, parse_types, output_path, output_formats, verbos
 
     # Export to each requested format
     all_success = True
-    for output_format in output_formats:
+
+    # Use tqdm for progress if available and verbose
+    format_iterator = tqdm(output_formats, desc="Exporting", disable=not (verbose and TQDM_AVAILABLE)) if TQDM_AVAILABLE else output_formats
+
+    for output_format in format_iterator:
         # Determine output path for this format
         if output_path:
             # If output_path is a directory, create file inside it
