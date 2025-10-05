@@ -5,22 +5,53 @@ import sys
 import argparse
 import os
 import platform
-import activity_diagram
 from pathlib import Path
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
+import subprocess
 
 
-def ask_password():
-    """Ask for password to access Activity Diagram tab"""
-    password_window = tk.Toplevel()
+"""
+I'm using This command to get the executable for the parser script:
+pyinstaller --onefile --windowed --name "Doc-Slayer" --icon "vehiclevo_logo_Basic.ico" --add-data "vehiclevo_logo_Basic.ico;." --add-data "CodeSmasher.exe;." parser.py
+"""
+
+class PasswordManager:
+    """Manages password authentication with session persistence"""
+    def __init__(self):
+        self.is_authenticated = False
+        self.attempts = 0
+        self.max_attempts = 3
+    
+    def reset(self):
+        """Reset authentication state"""
+        self.is_authenticated = False
+        self.attempts = 0
+
+
+# Global password manager instance
+password_manager = PasswordManager()
+
+
+def ask_password(parent_window=None):
+    """Ask for password to access Activity Diagram tab with 3 attempts"""
+    if password_manager.is_authenticated:
+        return True
+    
+    if password_manager.attempts >= password_manager.max_attempts:
+        messagebox.showerror("Access Denied", "Maximum password attempts exceeded. Application will close.")
+        if parent_window:
+            parent_window.destroy()
+        sys.exit(1)
+    
+    password_window = tk.Toplevel(parent_window)
     password_window.title("Access Activity Diagram")
-    password_window.geometry("300x150")
+    password_window.geometry("350x200")
     password_window.resizable(False, False)
     password_window.grab_set()  # Make it modal
     
@@ -34,7 +65,21 @@ def ask_password():
     y = (sh - h) // 2
     password_window.geometry(f"{w}x{h}+{x}+{y}")
     
+    # Add icon to password window
+    if getattr(sys, "frozen", False):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).parent
+    icon_path = base_path / "vehiclevo_logo_Basic.ico"
+    try:
+        password_window.iconbitmap(str(icon_path))
+    except Exception:
+        pass
+    
     ttk.Label(password_window, text="Enter password to access Activity Diagram:").pack(pady=10)
+    
+    attempts_left = password_manager.max_attempts - password_manager.attempts
+    ttk.Label(password_window, text=f"Attempts remaining: {attempts_left}").pack(pady=5)
     
     password_var = tk.StringVar()
     password_entry = ttk.Entry(password_window, textvariable=password_var, show="*", width=30)
@@ -44,21 +89,45 @@ def ask_password():
     result = {"access_granted": False}
     
     def check_password():
-        if password_var.get() == "Vehiclevo@123":
+        password_manager.attempts += 1
+        
+        if password_var.get() == "Vehiclevo@1234":
+            password_manager.is_authenticated = True
             result["access_granted"] = True
             password_window.destroy()
         else:
-            ttk.Label(password_window, text="Wrong password!", foreground="red").pack(pady=5)
-            password_entry.delete(0, tk.END)
+            if password_manager.attempts >= password_manager.max_attempts:
+                messagebox.showerror("Access Denied", "Maximum password attempts exceeded. Application will close.")
+                password_window.destroy()
+                if parent_window:
+                    parent_window.destroy()
+                sys.exit(1)
+            else:
+                remaining = password_manager.max_attempts - password_manager.attempts
+                error_msg = f"Wrong password! {remaining} attempt(s) remaining."
+                messagebox.showerror("Invalid Password", error_msg)
+                password_entry.delete(0, tk.END)
+                password_window.destroy()
     
     def on_enter(event):
         check_password()
     
-    password_entry.bind('<Return>', on_enter)
-    ttk.Button(password_window, text="OK", command=check_password).pack(pady=10)
+    def on_cancel():
+        password_window.destroy()
     
+    password_entry.bind('<Return>', on_enter)
+    
+    button_frame = ttk.Frame(password_window)
+    button_frame.pack(pady=10)
+    
+    ttk.Button(button_frame, text="OK", command=check_password).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=5)
+    
+    password_window.protocol("WM_DELETE_WINDOW", on_cancel)
     password_window.wait_window()
+    
     return result["access_granted"]
+
 
 def open_file(path: str):
     """Open a file with the default OS application."""
@@ -78,18 +147,18 @@ def write_excel(file_path: str, functions: list[dict], macros: list[dict], varia
     Headers are styled bold+red font on yellow fill.
     """
     FUNCTION_HEADERS = [
-      'Name', 'Syntax', 'Return Value', 'In-Parameters', 'Out-Parameters',
+      'Line Number', 'Name', 'Syntax', 'Return Value', 'In-Parameters', 'Out-Parameters',
       'Function Type', 'Description', 'Sync/Async', 'Reentrancy',
       'Triggers', 'Inputs', 'Outputs',
       'Invoked Operations', 'Used Data Types'
     ]
-    
+
     MACRO_HEADERS = [
-        'Name', 'Value'
+        'Line Number', 'Name', 'Value'
     ]
-    
+
     VARIABLE_HEADERS = [
-        'Name', 'Data Type', 'Initial Value', 'Scope'
+        'Line Number', 'Name', 'Data Type', 'Initial Value', 'Scope'
     ]
 
     path = Path(file_path)
@@ -119,7 +188,9 @@ def write_excel(file_path: str, functions: list[dict], macros: list[dict], varia
         for r in functions:
             row = []
             for h in function_headers:
-                if h == 'Name':
+                if h == 'Line Number':
+                    row.append(r.get('lineNumber', ''))
+                elif h == 'Name':
                     row.append(r['name'])
                 elif h == 'Syntax':
                     row.append(r['syntax'])
@@ -171,7 +242,9 @@ def write_excel(file_path: str, functions: list[dict], macros: list[dict], varia
         for r in macros:
             row = []
             for h in macro_headers:
-                if h == 'Name':
+                if h == 'Line Number':
+                    row.append(r.get('lineNumber', ''))
+                elif h == 'Name':
                     row.append(r['name'])
                 elif h == 'Value':
                     row.append(r['value'])
@@ -199,7 +272,9 @@ def write_excel(file_path: str, functions: list[dict], macros: list[dict], varia
         for r in variables:
             row = []
             for h in variable_headers:
-                if h == 'Name':
+                if h == 'Line Number':
+                    row.append(r.get('lineNumber', ''))
+                elif h == 'Name':
                     row.append(r['name'])
                 elif h == 'Data Type':
                     row.append(r['dataType'])
@@ -227,6 +302,7 @@ def write_markdown(file_path: str, functions: list[dict], macros: list[dict], va
     Only the selected fields are included in each table.
     """
     FUNCTION_FIELD_GETTERS = {
+      'Line Number':      lambda r: str(r.get('lineNumber', '')),
       'Name':             lambda r: r['name'],
       'Syntax':           lambda r: f"`{r['syntax']}`",
       'Sync/Async':       lambda r: f"`{r['Sync_Async']}`",
@@ -244,11 +320,13 @@ def write_markdown(file_path: str, functions: list[dict], macros: list[dict], va
     }
 
     MACRO_FIELD_GETTERS = {
+        'Line Number': lambda r: str(r.get('lineNumber', '')),
         'Name':  lambda r: r['name'],
         'Value': lambda r: f"`{r['value']}`",
     }
 
     VARIABLE_FIELD_GETTERS = {
+        'Line Number':   lambda r: str(r.get('lineNumber', '')),
         'Name':         lambda r: r['name'],
         'Data Type':    lambda r: f"`{r['dataType']}`",
         'Initial Value': lambda r: f"`{r['initialValue']}`",
@@ -342,6 +420,8 @@ def write_docx(source_path: str, swcName: str, functions: list[dict], macros: li
                 c1.text = value or ""
                 shade_cell(c0)
 
+            if 'Line Number' in sel_function_fields:
+                add_row("Line Number", str(r.get('lineNumber', '')))
             if 'Name' in sel_function_fields:
                 add_row("Service Name", r['name'])
             if 'Syntax' in sel_function_fields:
@@ -386,6 +466,8 @@ def write_docx(source_path: str, swcName: str, functions: list[dict], macros: li
                 c1.text = value or ""
                 shade_cell(c0)
 
+            if 'Line Number' in sel_macro_fields:
+                add_row("Line Number", str(r.get('lineNumber', '')))
             if 'Name' in sel_macro_fields:
                 add_row("Macro Name", r['name'])
             if 'Value' in sel_macro_fields:
@@ -408,6 +490,8 @@ def write_docx(source_path: str, swcName: str, functions: list[dict], macros: li
                 c1.text = value or ""
                 shade_cell(c0)
 
+            if 'Line Number' in sel_variable_fields:
+                add_row("Line Number", str(r.get('lineNumber', '')))
             if 'Name' in sel_variable_fields:
                 add_row("Variable Name", r['name'])
             if 'Data Type' in sel_variable_fields:
@@ -451,7 +535,7 @@ def parse_macros(src: str) -> list[dict]:
     """Extract #define macros from C source code."""
     # Regex for a macro header: #define NAME [optional(param,list)] body-fragment
     HEADER_RE = re.compile(r"^\s*#define\s+(\w+)\s*(\([^)]*\))?\s*(.*)", re.MULTILINE)
-    
+
     def should_skip(body: str) -> bool:
         """Return True if the macro should be excluded."""
         stripped = body.strip()
@@ -461,7 +545,7 @@ def parse_macros(src: str) -> list[dict]:
 
     lines = src.split('\n')
     macros = []
-    
+
     i = 0
     while i < len(lines):
         m = HEADER_RE.match(lines[i])
@@ -469,6 +553,7 @@ def parse_macros(src: str) -> list[dict]:
             i += 1
             continue
 
+        line_number = i + 1  # Track line number (1-indexed)
         name = m.group(1)              # macro name
         paramlist = m.group(2)         # None if object-like macro
         first = m.group(3).rstrip()    # first chunk of body
@@ -487,7 +572,8 @@ def parse_macros(src: str) -> list[dict]:
         if not should_skip(body_text):
             macros.append({
                 "name": name,
-                "value": body_text
+                "value": body_text,
+                "lineNumber": line_number
             })
 
         i += 1
@@ -587,76 +673,82 @@ def parse_variables(src: str) -> list[dict]:
     for match in extern_var_pattern.finditer(src_clean):
         if is_inside_function(match.start()):
             continue
-            
+
         extern_kw = match.group(1)
         data_type = match.group(2).strip()
         var_name = match.group(3)
-        
+
         if extern_kw and var_name not in exclude_keywords and data_type.lower() not in exclude_keywords:
+            line_number = get_line_number(src_clean, match.start())
             variables.append({
                 "name": var_name,
                 "dataType": data_type,
                 "initialValue": "",
-                "scope": "Extern"
+                "scope": "Extern",
+                "lineNumber": line_number
             })
     
     # Find static/regular variable declarations
     for match in static_var_pattern.finditer(src_clean):
         if is_inside_function(match.start()):
             continue
-            
+
         static_kw = match.group(1)
         data_type = match.group(2).strip()
         var_name = match.group(3)
         init_value = match.group(4).strip() if match.group(4) else ""
-        
+
         if var_name in exclude_keywords or data_type.lower() in exclude_keywords:
             continue
-            
+
         # Check if this looks like a function (has parentheses after the name)
         next_pos = match.end()
         if next_pos < len(src_clean):
             remaining = src_clean[next_pos:next_pos+50]
             if '(' in remaining.split(';')[0]:
                 continue
-        
+
         # Skip if it looks like a function pointer or typedef
         full_match = match.group(0)
         if '(*' in full_match or 'typedef' in full_match:
             continue
-        
+
         scope = "Static Global" if static_kw else "Global"
-        
+        line_number = get_line_number(src_clean, match.start())
+
         variables.append({
             "name": var_name,
             "dataType": data_type,
             "initialValue": init_value,
-            "scope": scope
+            "scope": scope,
+            "lineNumber": line_number
         })
-
 
     # Find array declarations
     for match in static_array_pattern.finditer(src_clean):
         if is_inside_function(match.start()):
             continue
-            
+
         static_kw = match.group(1)
         data_type = match.group(2).strip()
         var_name = match.group(3)
         array_size = match.group(4).strip() if match.group(4) else ""
         init_value = match.group(5).strip() if match.group(5) else ""
-        
+
         if var_name in exclude_keywords or data_type.lower() in exclude_keywords:
             continue
-            
+
         scope = "Static Global" if static_kw else "Global"
+        line_number = get_line_number(src_clean, match.start())
+
         full_type = f"{data_type}[{array_size}]"
-        
+
         variables.append({
             "name": var_name,
             "dataType": full_type,
             "initialValue": init_value,
-            "scope": scope
+            "scope": scope,
+            "lineNumber": line_number
         })
 
     # Post-processing: Clean up any remaining preprocessor keywords from datatypes
@@ -679,6 +771,10 @@ def parse_variables(src: str) -> list[dict]:
         #     cleaned_variables.append(var)
     
     return cleaned_variables
+
+def get_line_number(src: str, pos: int) -> int:
+    """Convert string position to line number (1-indexed)."""
+    return src[:pos].count('\n') + 1
 
 def parse_file(src: str) -> tuple[list, list, list]:
     """Parse file and return (functions, macros, variables)."""
@@ -813,6 +909,9 @@ def parse_file(src: str) -> tuple[list, list, list]:
         reentrancy = ""
         description = ""
 
+        # Calculate line number
+        line_number = get_line_number(src, m.start())
+
         functions.append({
             "name":       name,
             "syntax":     syntax,
@@ -827,7 +926,8 @@ def parse_file(src: str) -> tuple[list, list, list]:
             "used":       used,
             "Sync_Async": sync_async,
             "Reentrancy": reentrancy,
-            "description": description
+            "description": description,
+            "lineNumber": line_number
         })
 
     for m in runnable_rx.finditer(src):
@@ -845,21 +945,19 @@ def parse_file(src: str) -> tuple[list, list, list]:
 
 def show_gui():
     function_fields = [
-      "Name", "Description", "Syntax", "Triggers", "In-Parameters", "Out-Parameters",
+      "Line Number", "Name", "Description", "Syntax", "Triggers", "In-Parameters", "Out-Parameters",
       "Return Value", "Function Type", "Inputs", "Outputs",
       "Invoked Operations", "Used Data Types", "Sync/Async", "Reentrancy"
     ]
-    
+
     macro_fields = [
-        "Name", "Value"
-    ]
-    
-    variable_fields = [
-        "Name", "Data Type", "Initial Value", "Scope"
+        "Line Number", "Name", "Value"
     ]
 
-    activity_fields = [ "Generate Activity Diagram" ]
-    
+    variable_fields = [
+        "Line Number", "Name", "Data Type", "Initial Value", "Scope"
+    ]
+
     formats = ["Excel", "Word", "MD"]
 
     root = tk.Tk()
@@ -897,10 +995,26 @@ def show_gui():
     # Functions tab
     functions_frame = ttk.Frame(notebook)
     notebook.add(functions_frame, text="Functions")
-    
-    function_vars = {f: tk.BooleanVar(value=True) for f in function_fields}
-    
+
+    function_vars = {f: tk.BooleanVar(value=(f != "Line Number")) for f in function_fields}
+
     ttk.Label(functions_frame, text="Select function fields:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+
+    # Select All / Deselect All buttons
+    button_frame_func = ttk.Frame(functions_frame)
+    button_frame_func.grid(row=0, column=1, columnspan=2, sticky="e", padx=10, pady=5)
+
+    def select_all_functions():
+        for var in function_vars.values():
+            var.set(True)
+
+    def deselect_all_functions():
+        for var in function_vars.values():
+            var.set(False)
+
+    ttk.Button(button_frame_func, text="Select All", command=select_all_functions).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame_func, text="Deselect All", command=deselect_all_functions).pack(side=tk.LEFT, padx=5)
+
     for i, f in enumerate(function_fields):
         chk = ttk.Checkbutton(functions_frame, text=f, variable=function_vars[f])
         chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
@@ -908,10 +1022,26 @@ def show_gui():
     # Macros tab
     macros_frame = ttk.Frame(notebook)
     notebook.add(macros_frame, text="Macros")
-    
-    macro_vars = {f: tk.BooleanVar(value=True) for f in macro_fields}
-    
+
+    macro_vars = {f: tk.BooleanVar(value=(f != "Line Number")) for f in macro_fields}
+
     ttk.Label(macros_frame, text="Select macro fields:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+
+    # Select All / Deselect All buttons
+    button_frame_macro = ttk.Frame(macros_frame)
+    button_frame_macro.grid(row=0, column=1, columnspan=2, sticky="e", padx=10, pady=5)
+
+    def select_all_macros():
+        for var in macro_vars.values():
+            var.set(True)
+
+    def deselect_all_macros():
+        for var in macro_vars.values():
+            var.set(False)
+
+    ttk.Button(button_frame_macro, text="Select All", command=select_all_macros).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame_macro, text="Deselect All", command=deselect_all_macros).pack(side=tk.LEFT, padx=5)
+
     for i, f in enumerate(macro_fields):
         chk = ttk.Checkbutton(macros_frame, text=f, variable=macro_vars[f])
         chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
@@ -919,34 +1049,95 @@ def show_gui():
     # Variables tab
     variables_frame = ttk.Frame(notebook)
     notebook.add(variables_frame, text="Variables")
-    
-    variable_vars = {f: tk.BooleanVar(value=True) for f in variable_fields}
-    
+
+    variable_vars = {f: tk.BooleanVar(value=(f != "Line Number")) for f in variable_fields}
+
     ttk.Label(variables_frame, text="Select variable fields:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
+
+    # Select All / Deselect All buttons
+    button_frame_var = ttk.Frame(variables_frame)
+    button_frame_var.grid(row=0, column=1, columnspan=2, sticky="e", padx=10, pady=5)
+
+    def select_all_variables():
+        for var in variable_vars.values():
+            var.set(True)
+
+    def deselect_all_variables():
+        for var in variable_vars.values():
+            var.set(False)
+
+    ttk.Button(button_frame_var, text="Select All", command=select_all_variables).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame_var, text="Deselect All", command=deselect_all_variables).pack(side=tk.LEFT, padx=5)
+
     for i, f in enumerate(variable_fields):
         chk = ttk.Checkbutton(variables_frame, text=f, variable=variable_vars[f])
         chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
 
-
     # Activity Diagram tab (password protected)
     activity_frame = ttk.Frame(notebook)
-    activity_vars = {f: tk.BooleanVar(value=True) for f in activity_fields}
     
     def on_activity_tab_selected(event):
         selected_tab = event.widget.tab('current')['text']
-        if selected_tab == "Activity Diagram":
-            if not ask_password():
-                # If password wrong, go back to Variables tab
+        if selected_tab == "Activity Diagram" and not password_manager.is_authenticated:
+            if not ask_password(root):
+                # If password wrong or cancelled, go back to Variables tab
                 notebook.select(2)  # Variables tab index
                 return
     
     notebook.bind("<<NotebookTabChanged>>", on_activity_tab_selected)
     notebook.add(activity_frame, text="Activity Diagram")
     
-    ttk.Label(activity_frame, text="Select activity diagram options:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
-    for i, f in enumerate(activity_fields):
-        chk = ttk.Checkbutton(activity_frame, text=f, variable=activity_vars[f])
-        chk.grid(row=(i//3)+1, column=i%3, sticky="w", padx=15, pady=2)
+    # Activity Diagram content with button instead of checkbox
+    ttk.Label(activity_frame, text="Activity Diagram Generator", font=("Arial", 14, "bold")).pack(pady=20)
+    ttk.Label(activity_frame, text="Click the button below to generate activity diagrams from your C source file.").pack(pady=10)
+    
+    
+    def generate_activity_diagram():
+        if not password_manager.is_authenticated:
+            if not ask_password(root):
+                return
+        
+        # # Ask for C file if not already selected
+        # if not selected_file["path"]:
+        #     cfile = filedialog.askopenfilename(
+        #         title="Select C source file for activity diagram",
+        #         filetypes=[("C files","*.c"), ("All files","*.*")]
+        #     )
+        #     if not cfile:
+        #         return
+        #     selected_file["path"] = cfile
+        
+        # # Get output directory
+        # outdir = Path(save_dir.get())
+        # stem = Path(selected_file["path"]).stem
+        
+        # Execute the external CodeSmasher.exe
+        try:
+            if getattr(sys, "frozen", False):
+                base_path = Path(sys._MEIPASS)
+            else:
+                base_path = Path(__file__).parent
+            
+            exe_path = base_path / "CodeSmasher.exe"
+            if exe_path.exists():
+                # Run CodeSmasher.exe 
+                cmd = [str(exe_path)]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    messagebox.showinfo("Success", "Activity diagrams generated successfully!")
+                else:
+                    messagebox.showerror("Error", f"Failed to generate activity diagrams:\n{result.stderr}")
+            else:
+                messagebox.showerror("Error", "CodeSmasher.exe not found! Please ensure it's in the same directory as this script.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error running CodeSmasher.exe: {str(e)}")
+    
+    generate_btn = ttk.Button(activity_frame, text="Generate Activity Diagram", command=generate_activity_diagram, style="Accent.TButton")
+    generate_btn.pack(pady=30)
+    
+    # Add style for accent button
+    style = ttk.Style()
+    style.configure("Accent.TButton", font=("Arial", 11, "bold"))
 
     # Settings frame (at bottom)
     settings_frame = ttk.Frame(root)
@@ -972,7 +1163,6 @@ def show_gui():
         sel_function_fields = [f for f, v in function_vars.items() if v.get()]
         sel_macro_fields = [f for f, v in macro_vars.items() if v.get()]
         sel_variable_fields = [f for f, v in variable_vars.items() if v.get()]
-        sel_activity_fields = [f for f, v in activity_vars.items() if v.get()]
         sel_formats = [f for f, v in format_vars.items() if v.get()]
         outdir = Path(save_dir.get())
 
@@ -988,15 +1178,6 @@ def show_gui():
         src = open(cfile, encoding="utf-8").read()
         functions, macros, variables = parse_file(src)
         stem = Path(cfile).stem
-
-        # Generate Activity Diagrams if requested
-        if "Generate Activity Diagram" in sel_activity_fields:
-            print("Generating activity diagrams...")
-            success = activity_diagram.generate_activity_diagrams(
-                cfile, str(outdir), f"{stem}_activity"
-            )
-            if success:
-                print("✅ Activity diagrams generated successfully!")
 
         # Precompute the Excel path (used for .xlsx and .docx output)
         xlsx_path = outdir / f"{stem}.xlsx"
@@ -1059,13 +1240,13 @@ def main():
 
     swcName = Path(args.file).stem
     write_docx(args.file, swcName, functions, macros, variables, [
-        "Name","Description","Syntax","Triggers","In-Parameters","Out-Parameters",
+        "Line Number","Name","Description","Syntax","Triggers","In-Parameters","Out-Parameters",
         "Return Value","Function Type","Inputs","Outputs",
         "Invoked Operations","Used Data Types","Sync/Async","Reentrancy"
     ], [
-        "Name", "Value"
+        "Line Number", "Name", "Value"
     ], [
-        "Name", "Data Type", "Initial Value", "Scope"
+        "Line Number", "Name", "Data Type", "Initial Value", "Scope"
     ])
 
 if __name__ == "__main__":
