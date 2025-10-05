@@ -764,6 +764,10 @@ def parse_macros(src: str) -> list[dict]:
 
         body_text = " ".join(part.strip() for part in body_parts).strip()
 
+        # Remove comments from macro value
+        body_text = re.sub(r'/\*.*?\*/', '', body_text)  # Remove /* */ comments
+        body_text = re.sub(r'//.*', '', body_text).strip()  # Remove // comments and clean up
+
         if not should_skip(body_text):
             macros.append({
                 "name": name,
@@ -1457,8 +1461,8 @@ def show_gui():
                           sel_function_fields, sel_macro_fields, sel_variable_fields)
             open_file(str(md_path))
 
-        # Close the GUI
-        root.destroy()
+        # Show success message and keep GUI open for more work
+        messagebox.showinfo("Success", f"Documentation got Slayed(generated) successfully!\n\nFile: {stem}\nFormats: {', '.join(sel_formats)}\n")
 
     ttk.Button(settings_frame, text="Run", command=on_run).grid(row=2, column=0, pady=15)
     root.mainloop()
