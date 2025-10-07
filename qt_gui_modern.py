@@ -180,7 +180,7 @@ class DocumentationSlayerModernGUI(QMainWindow):
         """Initialize the ultra modern user interface"""
         self.setWindowTitle("Documentation Slayer")
         self.setGeometry(100, 100, 1100, 750)
-        self.setMinimumSize(1100, 750)
+        self.setMinimumSize(1100, 650)
 
         # Set application icon
         try:
@@ -237,7 +237,7 @@ class DocumentationSlayerModernGUI(QMainWindow):
             self.switch_tab(0)
 
         # Center window
-        self.center_window()
+        # self.center_window()
 
     def create_sidebar(self):
         """Create modern sidebar navigation"""
@@ -894,12 +894,13 @@ class DocumentationSlayerModernGUI(QMainWindow):
         if directory:
             self.save_dir_input.setText(directory)
 
-    def center_window(self):
-        """Center window on screen"""
-        frame_geometry = self.frameGeometry()
-        screen_center = self.screen().availableGeometry().center()
-        frame_geometry.moveCenter(screen_center)
-        self.move(frame_geometry.topLeft())
+    # No longer needed - starting maximized instead
+    # def center_window(self):
+    #     """Center window on screen"""
+    #     frame_geometry = self.frameGeometry()
+    #     screen_center = self.screen().availableGeometry().center()
+    #     frame_geometry.moveCenter(screen_center)
+    #     self.move(frame_geometry.topLeft())
 
     def switch_tab(self, tab_index):
         """Switch to the specified tab"""
