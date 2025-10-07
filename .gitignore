@@ -7,3 +7,18 @@ doc/progress and brainstorm.txt
 build
 __pycache__
 CLAUDE.md
+build.bat
+build.sh
+CHANGES_SUMMARY.md
+Doc-Slayer Design.png
+GUI_FIXES.md
+GUI_UPGRADE_SUMMARY.md
+MODERN_GUI_SHOWCASE.md
+PYQT6_MIGRATION.md
+Qt6 GUI Issue.png
+QUICK_FIXES_APPLIED.md
+QUICKSTART.md
+README.md
+SPLASH_SCREEN.md
+SPLASH_SCREEN_SUMMARY.md
+TROUBLESHOOTING.md

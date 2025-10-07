@@ -9,12 +9,19 @@ from pathlib import Path
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 import subprocess
 import threading
+
+# PyQt6 imports
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                              QTabWidget, QPushButton, QLabel, QLineEdit, QCheckBox,
+                              QFileDialog, QMessageBox, QTableWidget, QTableWidgetItem,
+                              QProgressDialog, QDialog, QDialogButtonBox, QGroupBox,
+                              QGridLayout, QHeaderView, QStyle, QComboBox)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QIcon, QFont, QColor
 
 # Try to import tqdm for CLI progress bars (optional)
 try:
@@ -27,7 +34,7 @@ except ImportError:
 
 """
 I'm using This command to get the executable for the parser script:
-pyinstaller --onefile --windowed --name "Doc-Slayer" --icon "vehiclevo_logo_Basic.ico" --add-data "vehiclevo_logo_Basic.ico;." --add-data "CodeSmasher.exe;." parser.py
+pyinstaller --onefile --windowed --name "Doc-Slayer" --icon "DocSlayerLogo.ico" --add-data "DocSlayerLogo.ico;." --add-data "CodeSmasher.exe;." --add-data "qt_gui_modern.py;." --hidden-import PyQt6 parser.py
 """
 
 # Global cancellation flag
@@ -50,55 +57,32 @@ class CancellationToken:
             self.cancelled = False
 
 
-class ProgressDialog:
-    """Progress dialog for GUI with cancellation support"""
-    def __init__(self, parent, title="Processing..."):
-        self.cancelled = False
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.geometry("400x150")
-        self.dialog.resizable(False, False)
-        self.dialog.grab_set()
+class ParserThread(QThread):
+    """Worker thread for parsing operations"""
+    finished = pyqtSignal(bool, str, list, list, list)  # success, error, functions, macros, variables
+    progress = pyqtSignal(str)  # progress text
 
-        # Center the window
-        self.dialog.update_idletasks()
-        w = self.dialog.winfo_width()
-        h = self.dialog.winfo_height()
-        sw = self.dialog.winfo_screenwidth()
-        sh = self.dialog.winfo_screenheight()
-        x = (sw - w) // 2
-        y = (sh - h) // 2
-        self.dialog.geometry(f"{w}x{h}+{x}+{y}")
+    def __init__(self, file_path, cancel_token):
+        super().__init__()
+        self.file_path = file_path
+        self.cancel_token = cancel_token
 
-        self.label = ttk.Label(self.dialog, text="Processing file...")
-        self.label.pack(pady=20)
-
-        self.progress = ttk.Progressbar(self.dialog, mode='indeterminate', length=350)
-        self.progress.pack(pady=10)
-        self.progress.start(10)
-
-        self.cancel_btn = ttk.Button(self.dialog, text="Cancel", command=self.cancel)
-        self.cancel_btn.pack(pady=10)
-
-        self.dialog.protocol("WM_DELETE_WINDOW", self.cancel)
-
-    def update_text(self, text):
-        """Update progress text"""
-        self.label.config(text=text)
-        self.dialog.update()
-
-    def cancel(self):
-        """Mark operation as cancelled"""
-        self.cancelled = True
-        self.close()
-
-    def close(self):
-        """Close the dialog"""
+    def run(self):
         try:
-            self.progress.stop()
-            self.dialog.destroy()
-        except:
-            pass
+            self.progress.emit("Reading file...")
+            with open(self.file_path, encoding="utf-8") as f:
+                src = f.read()
+
+            self.progress.emit(f"Parsing file ({len(src):,} bytes)...")
+            functions, macros, variables = parse_file(src, self.cancel_token)
+
+            if self.cancel_token.is_cancelled():
+                self.finished.emit(False, "Operation cancelled", [], [], [])
+                return
+
+            self.finished.emit(True, "", functions, macros, variables)
+        except Exception as e:
+            self.finished.emit(False, str(e), [], [], [])
 
 
 class PasswordManager:
@@ -118,95 +102,77 @@ class PasswordManager:
 password_manager = PasswordManager()
 
 
+class PasswordDialog(QDialog):
+    """Password dialog for Activity Diagram tab access"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Access Activity Diagram")
+        self.setModal(True)
+        self.setFixedSize(400, 200)
+
+        layout = QVBoxLayout()
+
+        # Title
+        title = QLabel("Enter password to access Activity Diagram:")
+        title.setFont(QFont("Arial", 10))
+        layout.addWidget(title)
+
+        # Attempts remaining
+        attempts_left = password_manager.max_attempts - password_manager.attempts
+        self.attempts_label = QLabel(f"Attempts remaining: {attempts_left}")
+        layout.addWidget(self.attempts_label)
+
+        # Password input
+        self.password_input = QLineEdit()
+        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_input.setPlaceholderText("Enter password...")
+        self.password_input.returnPressed.connect(self.check_password)
+        layout.addWidget(self.password_input)
+
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.check_password)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+        self.setLayout(layout)
+        self.access_granted = False
+
+    def check_password(self):
+        password_manager.attempts += 1
+
+        if self.password_input.text() == "Vehiclevo@1234":
+            password_manager.is_authenticated = True
+            self.access_granted = True
+            self.accept()
+        else:
+            if password_manager.attempts >= password_manager.max_attempts:
+                QMessageBox.critical(self, "Access Denied",
+                                   "Maximum password attempts exceeded. Application will close.")
+                self.reject()
+                QApplication.quit()
+            else:
+                remaining = password_manager.max_attempts - password_manager.attempts
+                QMessageBox.warning(self, "Invalid Password",
+                                  f"Wrong password! {remaining} attempt(s) remaining.")
+                self.password_input.clear()
+                self.attempts_label.setText(f"Attempts remaining: {remaining}")
+
+
 def ask_password(parent_window=None):
     """Ask for password to access Activity Diagram tab with 3 attempts"""
     if password_manager.is_authenticated:
         return True
-    
+
     if password_manager.attempts >= password_manager.max_attempts:
-        messagebox.showerror("Access Denied", "Maximum password attempts exceeded. Application will close.")
-        if parent_window:
-            parent_window.destroy()
-        sys.exit(1)
-    
-    password_window = tk.Toplevel(parent_window)
-    password_window.title("Access Activity Diagram")
-    password_window.geometry("350x200")
-    password_window.resizable(False, False)
-    password_window.grab_set()  # Make it modal
-    
-    # Center the window
-    password_window.update_idletasks()
-    w = password_window.winfo_width()
-    h = password_window.winfo_height()
-    sw = password_window.winfo_screenwidth()
-    sh = password_window.winfo_screenheight()
-    x = (sw - w) // 2
-    y = (sh - h) // 2
-    password_window.geometry(f"{w}x{h}+{x}+{y}")
-    
-    # Add icon to password window
-    if getattr(sys, "frozen", False):
-        base_path = Path(sys._MEIPASS)
-    else:
-        base_path = Path(__file__).parent
-    icon_path = base_path / "vehiclevo_logo_Basic.ico"
-    try:
-        password_window.iconbitmap(str(icon_path))
-    except Exception:
-        pass
-    
-    ttk.Label(password_window, text="Enter password to access Activity Diagram:").pack(pady=10)
-    
-    attempts_left = password_manager.max_attempts - password_manager.attempts
-    ttk.Label(password_window, text=f"Attempts remaining: {attempts_left}").pack(pady=5)
-    
-    password_var = tk.StringVar()
-    password_entry = ttk.Entry(password_window, textvariable=password_var, show="*", width=30)
-    password_entry.pack(pady=5)
-    password_entry.focus()
-    
-    result = {"access_granted": False}
-    
-    def check_password():
-        password_manager.attempts += 1
-        
-        if password_var.get() == "Vehiclevo@1234":
-            password_manager.is_authenticated = True
-            result["access_granted"] = True
-            password_window.destroy()
-        else:
-            if password_manager.attempts >= password_manager.max_attempts:
-                messagebox.showerror("Access Denied", "Maximum password attempts exceeded. Application will close.")
-                password_window.destroy()
-                if parent_window:
-                    parent_window.destroy()
-                sys.exit(1)
-            else:
-                remaining = password_manager.max_attempts - password_manager.attempts
-                error_msg = f"Wrong password! {remaining} attempt(s) remaining."
-                messagebox.showerror("Invalid Password", error_msg)
-                password_entry.delete(0, tk.END)
-                password_window.destroy()
-    
-    def on_enter(event):
-        check_password()
-    
-    def on_cancel():
-        password_window.destroy()
-    
-    password_entry.bind('<Return>', on_enter)
-    
-    button_frame = ttk.Frame(password_window)
-    button_frame.pack(pady=10)
-    
-    ttk.Button(button_frame, text="OK", command=check_password).pack(side=tk.LEFT, padx=5)
-    ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=5)
-    
-    password_window.protocol("WM_DELETE_WINDOW", on_cancel)
-    password_window.wait_window()
-    
-    return result["access_granted"]
+        QMessageBox.critical(parent_window, "Access Denied",
+                           "Maximum password attempts exceeded. Application will close.")
+        QApplication.quit()
+        return False
+
+    dialog = PasswordDialog(parent_window)
+    dialog.exec()
+    return dialog.access_granted
 
 
 def open_file(path: str):
@@ -1322,7 +1288,7 @@ def parse_file(src: str, cancel_token: CancellationToken = None) -> tuple[list, 
 
     return functions, macros, variables
 
-def show_gui():
+def show_gui_old():
     function_fields = [
       "Line Number", "Name", "Description", "Syntax", "Triggers", "In-Parameters", "Out-Parameters",
       "Return Value", "Function Type", "Inputs", "Outputs",
@@ -1348,7 +1314,7 @@ def show_gui():
     else:
         # running as a normal script
         base_path = Path(__file__).parent
-    icon_path = base_path / "vehiclevo_logo_Basic.ico"
+    icon_path = base_path / "DocSlayerLogo.ico"
     try:
         root.iconbitmap(str(icon_path))
     except Exception:
@@ -1648,6 +1614,49 @@ def show_gui():
 
     ttk.Button(settings_frame, text="Run", command=on_run).grid(row=2, column=0, pady=15)
     root.mainloop()
+
+
+def show_gui():
+    """Launch the PyQt6 GUI (Ultra Modern Edition)"""
+    from qt_gui_modern import DocumentationSlayerModernGUI
+    from splash_screen import ModernSplashScreen
+
+    app = QApplication(sys.argv)
+
+    # Apply modern stylesheet
+    app.setStyle('Fusion')
+
+    # Show splash screen
+    if getattr(sys, "frozen", False):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).parent
+
+    logo_path = base_path / "DocSlayerLogo.ico"
+    splash = ModernSplashScreen(str(logo_path) if logo_path.exists() else None)
+    splash.show()
+    app.processEvents()
+
+    # Create main window
+    window = DocumentationSlayerModernGUI(
+        password_manager=password_manager,
+        parse_file_func=parse_file,
+        write_excel_func=write_excel,
+        write_docx_func=write_docx,
+        write_markdown_func=write_markdown,
+        open_file_func=open_file
+    )
+
+    # Show main window after splash
+    def show_main_window():
+        window.show()
+        splash.close()
+
+    # Delay showing main window
+    QTimer.singleShot(3000, show_main_window)
+
+    sys.exit(app.exec())
+
 
 def log_verbose(message, verbose=False):
     """Print verbose logging messages"""
