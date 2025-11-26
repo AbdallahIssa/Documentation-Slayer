@@ -960,7 +960,8 @@ def parse_variables(src: str) -> list[dict]:
     # Keywords to exclude as variable names (control flow, etc.)
     exclude_var_names = {
         'if', 'for', 'while', 'switch', 'do', 'else', 'case', 'return',
-        'goto', 'break', 'continue', 'sizeof'
+        'goto', 'break', 'continue', 'sizeof', 'RTE_E_OK', 'RTE_E_NOT_OK',
+        'E_OK', 'E_NOT_OK', 'NULL', 'TRUE', 'FALSE', 'true', 'false'
     }
 
     # Keywords to exclude as data types (storage classes, type qualifiers that shouldn't be standalone)
@@ -1002,6 +1003,7 @@ def parse_variables(src: str) -> list[dict]:
         var_name = match.group(3)
         init_value = match.group(4).strip() if match.group(4) else ""
 
+        # CRITICAL: Check if inside function body
         if is_inside_function(match.start()):
             continue
 
@@ -1021,12 +1023,30 @@ def parse_variables(src: str) -> list[dict]:
         if '(*' in full_match or 'typedef' in full_match:
             continue
 
-        scope = "Static Global" if static_kw else "Global"
+        # Skip if this is a return statement (return varname;)
+        if 'return' in full_match.lower():
+            continue
 
-        # Find position in original source for accurate line number
+        # Additional check: Look at the line context in original source
+        # Skip if this appears to be inside a function (indented with spaces/tabs before it)
         src_pos = find_in_original_src(match, var_name, data_type)
         if src_pos is not None:
+            # Get the line containing this variable
+            line_start = src.rfind('\n', 0, src_pos) + 1
+            line_end = src.find('\n', src_pos)
+            if line_end == -1:
+                line_end = len(src)
+            line_content = src[line_start:line_end]
+
+            # Check if line starts with significant indentation (likely inside function)
+            # Global variables typically have no or minimal indentation
+            leading_spaces = len(line_content) - len(line_content.lstrip())
+            if leading_spaces > 4:  # More than 4 spaces/chars indentation = likely local
+                continue
+
             line_number = get_line_number(src, src_pos)
+
+            scope = "Static Global" if static_kw else "Global"
             variables.append({
                 "name": var_name,
                 "dataType": data_type,
@@ -1034,6 +1054,9 @@ def parse_variables(src: str) -> list[dict]:
                 "scope": scope,
                 "lineNumber": line_number
             })
+        else:
+            # If we can't find it in original source, skip it
+            continue
 
     # Find array declarations
     for match in static_array_pattern.finditer(src_clean):
@@ -1053,14 +1076,25 @@ def parse_variables(src: str) -> list[dict]:
         if var_name in exclude_var_names or data_type.lower() in exclude_data_types:
             continue
 
-        scope = "Static Global" if static_kw else "Global"
-
         # Find position in original source for accurate line number
         src_pos = find_in_original_src(match, var_name, data_type)
         if src_pos is not None:
+            # Get the line containing this variable
+            line_start = src.rfind('\n', 0, src_pos) + 1
+            line_end = src.find('\n', src_pos)
+            if line_end == -1:
+                line_end = len(src)
+            line_content = src[line_start:line_end]
+
+            # Check if line starts with significant indentation (likely inside function)
+            leading_spaces = len(line_content) - len(line_content.lstrip())
+            if leading_spaces > 4:  # More than 4 spaces/chars indentation = likely local
+                continue
+
             line_number = get_line_number(src, src_pos)
             full_type = f"{data_type}[{array_size}]"
 
+            scope = "Static Global" if static_kw else "Global"
             variables.append({
                 "name": var_name,
                 "dataType": full_type,
@@ -1068,6 +1102,9 @@ def parse_variables(src: str) -> list[dict]:
                 "scope": scope,
                 "lineNumber": line_number
             })
+        else:
+            # If we can't find it in original source, skip it
+            continue
 
     # Post-processing: Clean up any remaining preprocessor keywords from datatypes
     preprocessor_keywords = {
