@@ -1,1 +1,3 @@
 Documentation Slayer is a Visual Studio Code extension that automates the creation of unit-design documentation for both Classic AUTOSAR and non-AUTOSAR projects. It lets you export your results as a structured Excel spreadsheet, a Markdown file, or a Word document—just pick the format you need.
+
+https://marketplace.visualstudio.com/items?itemName=AbdallahIssa.runnable-info-extractor
